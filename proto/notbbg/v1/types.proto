@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package notbbg.v1;
+
+option go_package = "github.com/notbbg/notbbg/server/pkg/protocol";
+
+import "google/protobuf/timestamp.proto";
+
+// Canonical OHLC candlestick data.
+message OHLC {
+  string instrument = 1;   // e.g. "BTCUSD"
+  string exchange   = 2;   // e.g. "binance"
+  string timeframe  = 3;   // e.g. "1m", "5m", "1h", "1d"
+  google.protobuf.Timestamp timestamp = 4;
+  double open   = 5;
+  double high   = 6;
+  double low    = 7;
+  double close  = 8;
+  double volume = 9;
+}
+
+// Single price level in an order book.
+message PriceLevel {
+  double price    = 1;
+  double quantity = 2;
+}
+
+// Snapshot of a limit order book.
+message LOBSnapshot {
+  string instrument = 1;
+  string exchange   = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  uint64 sequence_number = 4;
+  repeated PriceLevel bids = 5;
+  repeated PriceLevel asks = 6;
+}
+
+// A single executed trade.
+message Trade {
+  string instrument = 1;
+  string exchange   = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  double price    = 4;
+  double quantity = 5;
+  Side   side     = 6;
+  string trade_id = 7;
+}
+
+enum Side {
+  SIDE_UNSPECIFIED = 0;
+  SIDE_BUY  = 1;
+  SIDE_SELL = 2;
+}
+
+// A news item from RSS, GDELT, or other sources.
+message NewsItem {
+  string id          = 1;
+  string title       = 2;
+  string body        = 3;
+  string source      = 4;  // e.g. "reuters", "coindesk"
+  string url         = 5;
+  google.protobuf.Timestamp published_at = 6;
+  repeated string tickers  = 7;  // related tickers
+  repeated string keywords = 8;
+}
+
+// An alert definition or triggered alert.
+message Alert {
+  string id   = 1;
+  AlertType type = 2;
+  string instrument = 3;  // empty for keyword/feed alerts
+  string condition  = 4;  // human-readable condition, e.g. "> 100000"
+  double threshold  = 5;
+  AlertStatus status = 6;
+  google.protobuf.Timestamp created_at   = 7;
+  google.protobuf.Timestamp triggered_at = 8;
+  string payload = 9;  // additional context when triggered
+}
+
+enum AlertType {
+  ALERT_TYPE_UNSPECIFIED = 0;
+  ALERT_TYPE_PRICE_ABOVE = 1;
+  ALERT_TYPE_PRICE_BELOW = 2;
+  ALERT_TYPE_VOLUME_SPIKE = 3;
+  ALERT_TYPE_KEYWORD = 4;
+  ALERT_TYPE_FEED_DOWN = 5;
+}
+
+enum AlertStatus {
+  ALERT_STATUS_UNSPECIFIED = 0;
+  ALERT_STATUS_ACTIVE    = 1;
+  ALERT_STATUS_TRIGGERED = 2;
+  ALERT_STATUS_DISMISSED = 3;
+}
+
+// Health status of a data feed.
+message FeedStatus {
+  string source_name = 1;
+  google.protobuf.Timestamp last_update = 2;
+  double latency_p50_ms = 3;
+  double latency_p95_ms = 4;
+  double latency_p99_ms = 5;
+  uint64 error_count    = 6;
+  uint64 bytes_received = 7;
+  FeedState state = 8;
+}
+
+enum FeedState {
+  FEED_STATE_UNSPECIFIED = 0;
+  FEED_STATE_CONNECTED  = 1;
+  FEED_STATE_RECONNECTING = 2;
+  FEED_STATE_STALE = 3;
+  FEED_STATE_ERROR = 4;
+}
+
+// A topic subscription request from a client.
+message Subscription {
+  string topic = 1;  // glob pattern, e.g. "ohlc.binance.*"
+  map<string, string> filters = 2;
+}
+
+// Wrapper for any message sent over the bus or wire.
+message Update {
+  string topic = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  oneof payload {
+    OHLC        ohlc        = 10;
+    LOBSnapshot lob         = 11;
+    Trade       trade       = 12;
+    NewsItem    news        = 13;
+    Alert       alert       = 14;
+    FeedStatus  feed_status = 15;
+  }
+}

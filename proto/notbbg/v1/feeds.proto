@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package notbbg.v1;
+
+option go_package = "github.com/notbbg/notbbg/server/pkg/protocol";
+
+// Configuration for a data feed source.
+message FeedConfig {
+  string name     = 1;  // unique feed identifier
+  string type     = 2;  // "ccxt", "rest", "rss", "websocket"
+  bool   enabled  = 3;
+  int32  poll_interval_seconds = 4;  // for polling feeds
+  map<string, string> params = 5;    // feed-specific config (exchange, symbols, urls, etc.)
+  int32  cache_ttl_seconds = 6;      // how long to cache results
+}
+
+// Request to manage feeds at runtime.
+message FeedControlRequest {
+  string feed_name = 1;
+  FeedAction action = 2;
+  FeedConfig config = 3;  // for ADD/UPDATE actions
+}
+
+enum FeedAction {
+  FEED_ACTION_UNSPECIFIED = 0;
+  FEED_ACTION_START  = 1;
+  FEED_ACTION_STOP   = 2;
+  FEED_ACTION_ADD    = 3;
+  FEED_ACTION_UPDATE = 4;
+  FEED_ACTION_REMOVE = 5;
+}
+
+message FeedControlResponse {
+  bool   success = 1;
+  string message = 2;
+}

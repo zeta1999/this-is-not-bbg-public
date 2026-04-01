@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package notbbg.v1;
+
+option go_package = "github.com/notbbg/notbbg/server/pkg/protocol";
+
+// Authentication and pairing service.
+service AuthService {
+  // Pair a new client using a one-time token.
+  rpc Pair(PairRequest) returns (PairResponse);
+
+  // Authenticate with an existing session token.
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
+
+  // Refresh an expiring session token.
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+}
+
+message PairRequest {
+  string one_time_token = 1;
+  string client_name    = 2;
+  ClientType client_type = 3;
+}
+
+enum ClientType {
+  CLIENT_TYPE_UNSPECIFIED = 0;
+  CLIENT_TYPE_TUI     = 1;
+  CLIENT_TYPE_CLI     = 2;
+  CLIENT_TYPE_DESKTOP = 3;
+  CLIENT_TYPE_PHONE   = 4;
+  CLIENT_TYPE_AGENT   = 5;
+}
+
+message PairResponse {
+  string session_token = 1;
+  uint32 rights        = 2;
+  int64  expires_at    = 3;
+}
+
+message AuthenticateRequest {
+  string session_token = 1;
+}
+
+message AuthenticateResponse {
+  bool   valid       = 1;
+  string session_token = 2;
+  uint32 rights      = 3;
+  int64  expires_at  = 4;
+}
+
+message RefreshTokenRequest {
+  string session_token = 1;
+}
+
+message RefreshTokenResponse {
+  bool   valid       = 1;
+  string session_token = 2;
+  uint32 rights      = 3;
+  int64  expires_at  = 4;
+}

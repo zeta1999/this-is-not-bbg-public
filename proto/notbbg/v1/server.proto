@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package notbbg.v1;
+
+option go_package = "github.com/notbbg/notbbg/server/pkg/protocol";
+
+import "notbbg/v1/types.proto";
+import "google/protobuf/timestamp.proto";
+
+// Main data service for subscribing to feeds and querying cached data.
+service DataService {
+  // Subscribe to real-time updates matching the given subscriptions.
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+
+  // Query historical data from the cache.
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // Export data in bulk (JSON, JSONL, CSV).
+  rpc ExportData(ExportDataRequest) returns (stream ExportDataResponse);
+
+  // Get current status of all data feeds.
+  rpc GetFeedStatus(GetFeedStatusRequest) returns (GetFeedStatusResponse);
+}
+
+message SubscribeRequest {
+  repeated Subscription subscriptions = 1;
+}
+
+message SubscribeResponse {
+  Update update = 1;
+}
+
+message QueryRequest {
+  QueryType type = 1;
+  string instrument = 2;
+  string exchange   = 3;
+  string timeframe  = 4;
+  google.protobuf.Timestamp from = 5;
+  google.protobuf.Timestamp to   = 6;
+  string query = 7;
+  int32 limit  = 8;
+}
+
+enum QueryType {
+  QUERY_TYPE_UNSPECIFIED = 0;
+  QUERY_TYPE_OHLC   = 1;
+  QUERY_TYPE_TRADES = 2;
+  QUERY_TYPE_LOB    = 3;
+  QUERY_TYPE_NEWS   = 4;
+  QUERY_TYPE_ALERTS = 5;
+}
+
+message QueryResponse {
+  repeated OHLC ohlc       = 1;
+  repeated Trade trades    = 2;
+  repeated LOBSnapshot lob = 3;
+  repeated NewsItem news   = 4;
+  repeated Alert alerts    = 5;
+}
+
+message ExportDataRequest {
+  QueryRequest query  = 1;
+  ExportFormat format = 2;
+  bool gzip           = 3;
+}
+
+enum ExportFormat {
+  EXPORT_FORMAT_UNSPECIFIED = 0;
+  EXPORT_FORMAT_JSON  = 1;
+  EXPORT_FORMAT_JSONL = 2;
+  EXPORT_FORMAT_CSV   = 3;
+}
+
+message ExportDataResponse {
+  bytes data = 1;
+}
+
+message GetFeedStatusRequest {}
+
+message GetFeedStatusResponse {
+  repeated FeedStatus feeds = 1;
+}

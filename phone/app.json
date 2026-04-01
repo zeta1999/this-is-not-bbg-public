@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "notbbg",
+    "slug": "notbbg",
+    "scheme": "notbbg",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.notbbg.phone",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is used to scan QR codes for server pairing."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#000000"
+      },
+      "package": "com.notbbg.phone",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow notbbg to access the camera for QR code scanning."
+        }
+      ],
+      "expo-secure-store",
+      "expo-asset"
+    ]
+  }
+}

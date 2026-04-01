@@ -1,0 +1,12 @@
+bin/
+*.db
+*.sock
+*.enc
+node_modules/
+dist/
+desktop/src-tauri/target/
+phone/.expo/
+phone/node_modules/
+dist/
+configs/secrets.enc
+configs
