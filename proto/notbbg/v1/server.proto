@@ -15,6 +15,12 @@ service DataService {
   // Query historical data from the cache.
   rpc Query(QueryRequest) returns (QueryResponse);
 
+  // GetDataRange streams a window of historical data for a topic,
+  // chunked so the client can render progressively and cancel via the
+  // request's correlation_id (or standard gRPC context cancellation).
+  // Cache is checked first, then datalake. See DATA-PLAN.md §3.
+  rpc GetDataRange(GetDataRangeRequest) returns (stream GetDataRangeResponse);
+
   // Export data in bulk (JSON, JSONL, CSV).
   rpc ExportData(ExportDataRequest) returns (stream ExportDataResponse);
 
@@ -56,6 +62,38 @@ message QueryResponse {
   repeated LOBSnapshot lob = 3;
   repeated NewsItem news   = 4;
   repeated Alert alerts    = 5;
+}
+
+// GetDataRangeRequest — client asks the server to stream a time window
+// of historical data for a topic. See DATA-PLAN.md §3. Named per
+// buf's STANDARD lint rule ("RPC request types should be named
+// <Method>Request"); semantically this is a data-range request.
+message GetDataRangeRequest {
+  string topic                        = 1;  // e.g. "ohlc.binance.BTCUSDT"
+  google.protobuf.Timestamp from      = 2;
+  google.protobuf.Timestamp to        = 3;
+  string resolution                   = 4;  // e.g. "1m", "1h", "1d"
+  string correlation_id               = 5;  // client-supplied ID for progress + cancellation
+  int32  max_records                  = 6;  // 0 = server default cap
+}
+
+// GetDataRangeResponse — one streamed chunk. Final chunk has eof=true.
+// Named per buf's STANDARD lint rule; semantically each message is a
+// progress chunk, not a single response.
+message GetDataRangeResponse {
+  string correlation_id = 1;
+  repeated Update records = 2;
+  int32  seq            = 3;  // 0-based chunk index; useful for "loading N/M"
+  bool   eof            = 4;
+}
+
+// DataRangeError — a terminal error for a correlation_id, sent by the
+// server before closing the stream. Not an RPC request/response type
+// (not referenced in a service definition), so the STANDARD lint rule
+// does not apply.
+message DataRangeError {
+  string correlation_id = 1;
+  string reason         = 2;
 }
 
 message ExportDataRequest {

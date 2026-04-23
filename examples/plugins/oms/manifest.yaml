@@ -1,0 +1,13 @@
+name: oms
+command: ./oms
+args: []
+input_topics:
+  - "ohlc.binance.*"
+  - "trade.binance.*"
+  - "plugin.oms.input"
+output_topics:
+  - "plugin.oms.screen"
+screens:
+  - id: "OMS"
+    label: "OMS"
+    icon: "swap-horizontal-outline"

@@ -216,11 +216,6 @@ type binanceDepthMsg struct {
 	Asks   [][]string `json:"asks"`
 }
 
-func (a *BinanceAdapter) processMessage(raw []byte) {
-	var k, t, d, u uint64
-	a.processMessageCounted(raw, &k, &t, &d, &u)
-}
-
 func (a *BinanceAdapter) processMessageCounted(raw []byte, klineCount, tradeCount, depthCount, unknownCount *uint64) string {
 	// Try combined stream format first.
 	var wrapper binanceStreamMsg
@@ -370,6 +365,117 @@ func (a *BinanceAdapter) handleDepth(stream string, data json.RawMessage) {
 	})
 }
 
+// BackfillHistorical implements feeds.Backfiller. Fetches historical
+// klines across the requested time window, paging through Binance's
+// 1000-rows-per-call limit. Called by the backfill coordinator.
+func (a *BinanceAdapter) BackfillHistorical(ctx context.Context, req feeds.BackfillRequest) ([]feeds.OHLC, error) {
+	if req.Instrument == "" || req.Timeframe == "" {
+		return nil, fmt.Errorf("instrument and timeframe required")
+	}
+	if req.From.IsZero() || req.To.IsZero() {
+		return nil, fmt.Errorf("from and to required")
+	}
+	if req.To.Before(req.From) {
+		return nil, fmt.Errorf("to before from")
+	}
+
+	const pageSize = 1000
+	cap := req.Limit
+	if cap <= 0 {
+		cap = 100_000
+	}
+
+	var out []feeds.OHLC
+	cursor := req.From
+	for cursor.Before(req.To) && len(out) < cap {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+
+		url := fmt.Sprintf("%s/api/v3/klines?symbol=%s&interval=%s&startTime=%d&endTime=%d&limit=%d",
+			a.restBase, req.Instrument, req.Timeframe,
+			cursor.UnixMilli(), req.To.UnixMilli(), pageSize)
+
+		page, lastTS, err := a.fetchKlineWindow(ctx, url, req.Instrument, req.Timeframe)
+		if err != nil {
+			return out, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		out = append(out, page...)
+		// Advance past the last candle's start time (plus 1 ms) to
+		// avoid re-fetching the boundary row on the next page.
+		cursor = time.UnixMilli(lastTS + 1)
+		if len(page) < pageSize {
+			break
+		}
+	}
+	if len(out) > cap {
+		out = out[:cap]
+	}
+	return out, nil
+}
+
+// fetchKlineWindow GETs a single Binance klines page and decodes it.
+// Returns the decoded rows plus the last start-timestamp so the
+// caller can page forward.
+func (a *BinanceAdapter) fetchKlineWindow(ctx context.Context, url, symbol, timeframe string) ([]feeds.OHLC, int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetch klines: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("binance REST %d", resp.StatusCode)
+	}
+	var raw [][]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, 0, fmt.Errorf("decode klines: %w", err)
+	}
+
+	var (
+		candles []feeds.OHLC
+		lastTS  int64
+	)
+	for _, k := range raw {
+		if len(k) < 6 {
+			continue
+		}
+		var ts int64
+		_ = json.Unmarshal(k[0], &ts)
+		var openS, highS, lowS, closeS, volS string
+		_ = json.Unmarshal(k[1], &openS)
+		_ = json.Unmarshal(k[2], &highS)
+		_ = json.Unmarshal(k[3], &lowS)
+		_ = json.Unmarshal(k[4], &closeS)
+		_ = json.Unmarshal(k[5], &volS)
+
+		open, _ := strconv.ParseFloat(openS, 64)
+		high, _ := strconv.ParseFloat(highS, 64)
+		low, _ := strconv.ParseFloat(lowS, 64)
+		close_, _ := strconv.ParseFloat(closeS, 64)
+		vol, _ := strconv.ParseFloat(volS, 64)
+
+		candles = append(candles, feeds.OHLC{
+			Instrument: symbol,
+			Exchange:   "binance",
+			Timeframe:  timeframe,
+			Timestamp:  time.UnixMilli(ts),
+			Open:       open, High: high, Low: low, Close: close_, Volume: vol,
+		})
+		if ts > lastTS {
+			lastTS = ts
+		}
+	}
+	return candles, lastTS, nil
+}
+
 // FetchOHLCHistory fetches historical klines via REST API.
 func (a *BinanceAdapter) FetchOHLCHistory(ctx context.Context, symbol, interval string, limit int) ([]feeds.OHLC, error) {
 	url := fmt.Sprintf("%s/api/v3/klines?symbol=%s&interval=%s&limit=%d",
@@ -401,13 +507,13 @@ func (a *BinanceAdapter) FetchOHLCHistory(ctx context.Context, symbol, interval 
 			continue
 		}
 		var ts int64
-		json.Unmarshal(k[0], &ts)
+		_ = json.Unmarshal(k[0], &ts)
 		var openS, highS, lowS, closeS, volS string
-		json.Unmarshal(k[1], &openS)
-		json.Unmarshal(k[2], &highS)
-		json.Unmarshal(k[3], &lowS)
-		json.Unmarshal(k[4], &closeS)
-		json.Unmarshal(k[5], &volS)
+		_ = json.Unmarshal(k[1], &openS)
+		_ = json.Unmarshal(k[2], &highS)
+		_ = json.Unmarshal(k[3], &lowS)
+		_ = json.Unmarshal(k[4], &closeS)
+		_ = json.Unmarshal(k[5], &volS)
 
 		open, _ := strconv.ParseFloat(openS, 64)
 		high, _ := strconv.ParseFloat(highS, 64)

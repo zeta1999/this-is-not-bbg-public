@@ -119,6 +119,30 @@ message Subscription {
   map<string, string> filters = 2;
 }
 
+// SeriesKey identifies a point in a multi-dimensional time series.
+// The `dims` map holds arbitrary key/value dimensions; well-known
+// keys are { type, asset, pair, source, exchange, instrument, tenor,
+// strike, side } by convention, but any dim may be added without
+// breaking compatibility. See DATA-PLAN.md §5.
+message SeriesKey {
+  map<string, string> dims = 1;
+}
+
+// SeriesPoint is a single timestamped observation for a SeriesKey.
+// The value is an oneof so scalars, structured market data, or
+// arbitrary raw bytes can all be carried.
+message SeriesPoint {
+  SeriesKey key = 1;
+  google.protobuf.Timestamp t = 2;
+  oneof value {
+    double      scalar = 10;
+    OHLC        ohlc   = 11;
+    LOBSnapshot lob    = 12;
+    Trade       trade  = 13;
+    bytes       raw    = 14;
+  }
+}
+
 // Wrapper for any message sent over the bus or wire.
 message Update {
   string topic = 1;

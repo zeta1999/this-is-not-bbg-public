@@ -1,0 +1,12 @@
+name: backtester
+command: ./backtester
+args: []
+input_topics:
+  - "ohlc.binance.*"
+  - "plugin.backtester.input"
+output_topics:
+  - "plugin.backtester.screen"
+screens:
+  - id: "BACKTEST"
+    label: "Backtester"
+    icon: "trending-up-outline"

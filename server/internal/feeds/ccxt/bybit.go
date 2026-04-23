@@ -124,7 +124,7 @@ func (a *BybitAdapter) connectAndStream(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				conn.WriteMessage(websocket.TextMessage, []byte(`{"op":"ping"}`))
+				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"op":"ping"}`))
 			}
 		}
 	}()

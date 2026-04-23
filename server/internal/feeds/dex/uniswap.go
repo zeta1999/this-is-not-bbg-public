@@ -22,6 +22,9 @@ type UniswapAdapter struct {
 	bus          *bus.Bus
 	pollInterval time.Duration
 	tokens       []dexToken
+	// llamaURL overrides the DeFi Llama base URL; empty means prod.
+	// Test-only seam so uniswap_debug_test can inject a mock server.
+	llamaURL string
 
 	mu         sync.RWMutex
 	state      string
@@ -110,7 +113,11 @@ func (a *UniswapAdapter) fetch(ctx context.Context) {
 		keys = append(keys, fmt.Sprintf("%s:%s", t.Chain, t.Address))
 	}
 
-	url := fmt.Sprintf("https://coins.llama.fi/prices/current/%s", strings.Join(keys, ","))
+	base := "https://coins.llama.fi"
+	if a.llamaURL != "" {
+		base = a.llamaURL
+	}
+	url := fmt.Sprintf("%s/prices/current/%s", base, strings.Join(keys, ","))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -196,7 +203,9 @@ func (a *UniswapAdapter) fetch(ctx context.Context) {
 	a.bytesRecv += uint64(resp.ContentLength)
 	a.mu.Unlock()
 
-	slog.Debug("uniswap/defi-llama fetched", "tokens", published)
+	// Info (not Debug) so the LOG tab shows live confirmation that
+	// the Uniswap adapter is producing data.
+	slog.Info("uniswap/defi-llama fetched", "tokens", published)
 }
 
 // syntheticLOB creates a synthetic order book approximation around the current price.

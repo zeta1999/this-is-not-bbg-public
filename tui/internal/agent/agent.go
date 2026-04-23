@@ -162,8 +162,8 @@ func (r *Runner) Stop() {
 		r.cancel()
 	}
 	if r.cmd != nil && r.cmd.Process != nil {
-		r.cmd.Process.Kill()
-		r.cmd.Wait()
+		_ = r.cmd.Process.Kill()
+		_ = r.cmd.Wait()
 	}
 	r.running = false
 	slog.Info("agent stopped", "skill", r.skillName)

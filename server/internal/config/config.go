@@ -35,10 +35,22 @@ type ServerConfig struct {
 }
 
 type FeedsConfig struct {
-	Exchanges []ExchangeConfig `yaml:"exchanges"`
-	DEX       DEXConfig        `yaml:"dex"`
-	World     WorldFeedsConfig `yaml:"world"`
-	RSS       RSSConfig        `yaml:"rss"`
+	Exchanges   []ExchangeConfig `yaml:"exchanges"`
+	DEX         DEXConfig        `yaml:"dex"`
+	World       WorldFeedsConfig `yaml:"world"`
+	RSS         RSSConfig        `yaml:"rss"`
+	Sibelius    FileFeedConfig   `yaml:"sibelius,omitempty"`
+	Ravel       FileFeedConfig   `yaml:"ravel,omitempty"`
+	TSBaseFiles FileFeedConfig   `yaml:"tsbase_files,omitempty"`
+}
+
+// FileFeedConfig is the shared shape for directory-watching adapters
+// (Sibelius JSON, Ravel JSON/XLSX, ts-base CSV/JSONL).
+type FileFeedConfig struct {
+	Enabled      bool          `yaml:"enabled"`
+	Path         string        `yaml:"path"`
+	PollInterval time.Duration `yaml:"poll_interval"`
+	TopicPrefix  string        `yaml:"topic_prefix,omitempty"`
 }
 
 type DEXConfig struct {
@@ -164,7 +176,8 @@ func (c *Config) validate() error {
 		return nil
 	}
 	if len(c.Feeds.Exchanges) == 0 && !c.Feeds.World.YahooFinance.Enabled &&
-		!c.Feeds.World.CoinGecko.Enabled && !c.Feeds.RSS.Enabled {
+		!c.Feeds.World.CoinGecko.Enabled && !c.Feeds.RSS.Enabled &&
+		!c.Feeds.Sibelius.Enabled && !c.Feeds.Ravel.Enabled && !c.Feeds.TSBaseFiles.Enabled {
 		return fmt.Errorf("at least one feed source must be configured")
 	}
 	return nil

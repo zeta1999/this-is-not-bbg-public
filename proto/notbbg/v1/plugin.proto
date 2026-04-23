@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package notbbg.v1;
+
+option go_package = "github.com/notbbg/notbbg/server/pkg/protocol";
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------------------
+// Cell grid model — the core abstraction for all plugin screens.
+// ---------------------------------------------------------------------------
+
+// CellStyle controls text appearance.
+message CellStyle {
+  string fg        = 1; // foreground color: "green", "red", "#FF4444", etc.
+  string bg        = 2; // background color
+  bool   bold      = 3;
+  bool   italic    = 4;
+  bool   underline = 5;
+}
+
+// CellAddress identifies a cell within a screen.
+message CellAddress {
+  uint32 row = 1;
+  uint32 col = 2;
+}
+
+// EnumOption is a single value in an enum dropdown.
+message EnumOption {
+  string value = 1; // internal value sent back to plugin
+  string label = 2; // display label
+}
+
+// InputConfig defines an interactive input cell.
+message InputConfig {
+  oneof input {
+    DecimalInput  decimal  = 1;
+    IntegerInput  integer  = 2;
+    StringInput   string_input = 3;
+    EnumInput     enum_input   = 4;
+    SelectionInput selection   = 5;
+  }
+}
+
+message DecimalInput {
+  double value     = 1;
+  double min       = 2;
+  double max       = 3;
+  uint32 precision = 4; // decimal places (default 2)
+  string label     = 5;
+}
+
+message IntegerInput {
+  int64  value = 1;
+  int64  min   = 2;
+  int64  max   = 3;
+  int64  step  = 4; // default 1
+  string label = 5;
+}
+
+message StringInput {
+  string value       = 1;
+  string placeholder = 2;
+  string label       = 3;
+}
+
+message EnumInput {
+  string value               = 1; // current selected value
+  repeated EnumOption options = 2;
+  string label               = 3;
+}
+
+message SelectionInput {
+  string value       = 1; // current selected ticker/pair
+  string label       = 2;
+  string search_hint = 3; // e.g. "Search instruments..."
+}
+
+// NumberOutput displays a formatted numeric result.
+message NumberOutput {
+  double value     = 1;
+  uint32 precision = 2; // decimal places
+  string unit      = 3; // optional suffix: "%", "ms", "$", etc.
+  string delta     = 4; // "up", "down", "" — controls ▲▼ indicator
+  string label     = 5;
+}
+
+// FormulaCell holds an Excel-style formula.
+message FormulaCell {
+  string expression    = 1; // e.g. "=BS(R1C1, R2C1, R2C3, ...)"
+  double cached_value  = 2; // last computed value (for display before recalc)
+  uint32 precision     = 3; // decimal places for display
+  string label         = 4;
+}
+
+// Cell is the fundamental unit of the grid.
+message Cell {
+  CellAddress address = 1;
+  CellStyle   style   = 2;
+
+  oneof content {
+    string       text    = 10; // styled text (headers, labels)
+    InputConfig  input   = 11; // interactive input
+    NumberOutput number  = 12; // formatted numeric output
+    FormulaCell  formula = 13; // Excel-style formula
+    string       component = 14; // component ID: "chart", "progress", "sparkline", etc.
+  }
+
+  // Conditional visibility: cell hidden unless condition met.
+  // Empty string = always visible. Format: "R0C3=Barrier" (show if row0,col3 equals "Barrier").
+  string visible_when = 20;
+
+  // Span: how many columns/rows this cell occupies (default 1).
+  uint32 col_span = 21;
+  uint32 row_span = 22;
+}
+
+// Screen is a grid of cells, possibly divided into sub-screens.
+message Screen {
+  string id    = 1;
+  string label = 2;
+  repeated Cell cells = 3;
+}
+
+// ScreenUpdate sends incremental cell changes (not the full grid).
+message ScreenUpdate {
+  string screen_id       = 1;
+  repeated Cell cells    = 2; // only cells that changed
+  bool full_replace      = 3; // if true, replace entire grid (initial load)
+}
+
+// ---------------------------------------------------------------------------
+// Plugin ↔ Server protocol messages.
+// ---------------------------------------------------------------------------
+
+// PluginRegister announces a plugin's capabilities to the server.
+message PluginRegister {
+  string plugin_name                = 1;
+  repeated Screen screens           = 2; // initial screen layouts
+  repeated string subscribe_topics  = 3; // data the plugin wants to receive
+}
+
+// PluginDataPush delivers subscribed data from the server to a plugin.
+message PluginDataPush {
+  string topic                            = 1;
+  google.protobuf.Timestamp timestamp     = 2;
+  bytes  payload                          = 3; // serialized market data
+}
+
+// PluginInputEvent is sent from the GUI to the plugin when a user edits an input cell.
+message PluginInputEvent {
+  string      screen_id = 1;
+  CellAddress address   = 2;
+
+  oneof value {
+    double decimal_value = 10;
+    int64  integer_value = 11;
+    string string_value  = 12;
+    string enum_value    = 13; // selected enum option value
+    string selection_value = 14; // selected ticker/pair
+  }
+}
+
+// PluginJobStatus reports async job progress.
+message PluginJobStatus {
+  string job_id    = 1;
+  string screen_id = 2;
+  JobState state   = 3;
+  float  progress  = 4; // 0.0 to 1.0
+  string message   = 5; // status text: "Compiling...", "Running 42/100", etc.
+  string error     = 6; // non-empty on failure
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_PENDING     = 1;
+  JOB_STATE_RUNNING     = 2;
+  JOB_STATE_COMPLETED   = 3;
+  JOB_STATE_FAILED      = 4;
+  JOB_STATE_CANCELLED   = 5;
+}
+
+// PluginMessage wraps all plugin ↔ server communication.
+message PluginMessage {
+  oneof message {
+    PluginRegister   register    = 1;
+    ScreenUpdate     screen      = 2;
+    PluginDataPush   data        = 3;
+    PluginInputEvent input_event = 4;
+    PluginJobStatus  job_status  = 5;
+  }
+}

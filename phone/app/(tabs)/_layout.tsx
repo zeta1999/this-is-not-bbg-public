@@ -24,6 +24,12 @@ const TAB_CONFIG: {
     iconFocused: "bar-chart",
   },
   {
+    name: "trades",
+    title: "Trades",
+    icon: "swap-vertical-outline",
+    iconFocused: "swap-vertical",
+  },
+  {
     name: "news",
     title: "News",
     icon: "newspaper-outline",
@@ -34,6 +40,12 @@ const TAB_CONFIG: {
     title: "Alerts",
     icon: "notifications-outline",
     iconFocused: "notifications",
+  },
+  {
+    name: "plugins",
+    title: "Plugins",
+    icon: "extension-puzzle-outline",
+    iconFocused: "extension-puzzle",
   },
   {
     name: "settings",

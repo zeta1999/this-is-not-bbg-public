@@ -5,6 +5,7 @@ package bus
 import (
 	"path"
 	"sync"
+	"sync/atomic"
 )
 
 // Message is a topic-tagged payload sent through the bus.
@@ -18,7 +19,12 @@ type Subscriber struct {
 	C        chan Message
 	patterns []string
 	id       uint64
+	dropped  atomic.Uint64
 }
+
+// Dropped returns the number of messages the bus tried to deliver to
+// this subscriber but had to drop because the channel was full.
+func (s *Subscriber) Dropped() uint64 { return s.dropped.Load() }
 
 // Bus is a topic-based pub/sub message bus.
 type Bus struct {
@@ -27,6 +33,25 @@ type Bus struct {
 	nextID      uint64
 	ringBuffers map[string]*ringBuffer
 	ringDepth   int
+	dropped     atomic.Uint64 // total drops across all subscribers
+}
+
+// Stats is a snapshot of bus counters.
+type Stats struct {
+	Subscribers int
+	Topics      int
+	Dropped     uint64
+}
+
+// Stats returns a snapshot of current counters.
+func (b *Bus) Stats() Stats {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return Stats{
+		Subscribers: len(b.subscribers),
+		Topics:      len(b.ringBuffers),
+		Dropped:     b.dropped.Load(),
+	}
 }
 
 type ringBuffer struct {
@@ -155,7 +180,8 @@ func (b *Bus) Publish(msg Message) {
 			select {
 			case sub.C <- msg:
 			default:
-				// Subscriber can't keep up; drop message.
+				sub.dropped.Add(1)
+				b.dropped.Add(1)
 			}
 		}
 	}

@@ -26,6 +26,9 @@ rm -rf /tmp/notbbg-datalake
 echo "=== Building Go binaries ==="
 make build
 
+echo "=== Deploying plugins ==="
+./scripts/deploy-plugins.sh
+
 echo "=== Init collector secrets ==="
 NOTBBG_PASSWORD="$PASSWORD" ./bin/notbbg-collector \
     -init-secrets -enc-config "$SECRETS_FILE"

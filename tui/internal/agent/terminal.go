@@ -61,7 +61,7 @@ func (t *Terminal) Start(shell string, env []string) error {
 	}
 
 	// Set terminal size.
-	pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 120})
+	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 120})
 
 	t.cmd = cmd
 	t.ptmx = ptmx
@@ -92,7 +92,7 @@ func (t *Terminal) Start(shell string, env []string) error {
 
 	// Wait for exit.
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		ptmx.Close()
 	}()
 
@@ -111,7 +111,7 @@ func (t *Terminal) SendLine(line string) {
 	if len(t.lines) > t.maxLines {
 		t.lines = t.lines[len(t.lines)-t.maxLines:]
 	}
-	io.WriteString(t.ptmx, line+"\n")
+	_, _ = io.WriteString(t.ptmx, line+"\n")
 }
 
 // Lines returns a copy of all output lines.

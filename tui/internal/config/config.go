@@ -20,8 +20,53 @@ func DefaultPath() string {
 type UserConfig struct {
 	Server    ServerSettings    `yaml:"server"`
 	Panels    PanelSettings     `yaml:"panels"`
+	GUI       GUISettings       `yaml:"gui"`
 	Watchlist []string          `yaml:"watchlist"`
 	Alerts    []AlertSetting    `yaml:"alerts"`
+}
+
+// GUISettings groups client-side rendering knobs that apply to both
+// the TUI and the desktop app. See DATA-PLAN.md §3.
+type GUISettings struct {
+	Cache GUICacheSettings `yaml:"cache"`
+}
+
+// GUICacheSettings caps per-panel client memory so that switching
+// instruments or timeframes never grows the panel without bound.
+// Values chosen to keep the whole GUI working set under a few MiB
+// for typical use.
+type GUICacheSettings struct {
+	// OHLCRowsPerInstrument caps the OHLC rows retained per
+	// (instrument, timeframe) key. Excess rows are evicted in
+	// timestamp order (oldest first).
+	OHLCRowsPerInstrument int `yaml:"ohlc_rows_per_instrument"`
+	// LOBDepthLevels caps the number of levels shown on each side of
+	// the book.
+	LOBDepthLevels int `yaml:"lob_depth_levels"`
+	// TradesRing caps the trade tape buffer per instrument (ring).
+	TradesRing int `yaml:"trades_ring"`
+}
+
+// Defaults for GUICacheSettings used when the user hasn't specified
+// a value in config.yaml.
+const (
+	DefaultOHLCRowsPerInstrument = 10000
+	DefaultLOBDepthLevels        = 50
+	DefaultTradesRing            = 2000
+)
+
+// WithDefaults fills in any zero fields with built-in defaults.
+func (g GUICacheSettings) WithDefaults() GUICacheSettings {
+	if g.OHLCRowsPerInstrument <= 0 {
+		g.OHLCRowsPerInstrument = DefaultOHLCRowsPerInstrument
+	}
+	if g.LOBDepthLevels <= 0 {
+		g.LOBDepthLevels = DefaultLOBDepthLevels
+	}
+	if g.TradesRing <= 0 {
+		g.TradesRing = DefaultTradesRing
+	}
+	return g
 }
 
 type ServerSettings struct {
@@ -63,7 +108,7 @@ func Load(path string) (*UserConfig, error) {
 	if err := lockShared(f); err != nil {
 		return nil, fmt.Errorf("flock shared: %w", err)
 	}
-	defer unlock(f)
+	defer func() { _ = unlock(f) }()
 
 	cfg := &UserConfig{}
 	if err := yaml.NewDecoder(f).Decode(cfg); err != nil {
@@ -93,7 +138,7 @@ func Save(path string, cfg *UserConfig) error {
 	if err := lockExclusive(f); err != nil {
 		return fmt.Errorf("flock exclusive: %w", err)
 	}
-	defer unlock(f)
+	defer func() { _ = unlock(f) }()
 
 	// Truncate and write.
 	if err := f.Truncate(0); err != nil {
@@ -110,6 +155,9 @@ func defaultConfig() *UserConfig {
 	return &UserConfig{
 		Server: ServerSettings{
 			AutoStart: true,
+		},
+		GUI: GUISettings{
+			Cache: GUICacheSettings{}.WithDefaults(),
 		},
 		Watchlist: []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"},
 	}

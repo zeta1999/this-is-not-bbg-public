@@ -149,11 +149,11 @@ func pushSession(ctx context.Context, addr, token string, isSession bool, msgBus
 			}
 			data, _ := wireMsg.Encode()
 
-			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if err := conn.WriteFrame(data); err != nil {
 				return sessionID, fmt.Errorf("write to collector: %w", err)
 			}
-			conn.SetWriteDeadline(time.Time{})
+			_ = conn.SetWriteDeadline(time.Time{})
 
 			pushed++
 			if pushed%1000 == 0 {

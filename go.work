@@ -3,4 +3,15 @@ go 1.25.0
 use (
 	./server
 	./tui
+	./libs/pluginsdk
+	./examples/plugins/hello-world
+	./examples/plugins/pricer
+	./examples/plugins/backtester
+	./examples/plugins/portfolio
+	./examples/plugins/monitor
+	./examples/plugins/voltools
+	./examples/plugins/oms
+	./examples/plugins/timeseries
+	./examples/plugins/optimizer
+	./examples/plugins/swaption
 )

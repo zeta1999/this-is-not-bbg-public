@@ -76,6 +76,7 @@ var subscribePatterns = []string{
 	"ohlc.*.*", "lob.*.*", "trade.*.*",
 	"news", "alert", "feed.status",
 	"system.health", "indicator.*",
+	"plugin.*", "plugin.*.*",
 }
 
 func runTUI(socketPath, collectorAddr, collectorToken string) error {
@@ -104,7 +105,7 @@ func runTUI(socketPath, collectorAddr, collectorToken string) error {
 
 	// Embedded terminal for AGENT panel.
 	agentTerm := agent.NewTerminal(500)
-	agentTerm.Start("/bin/zsh", []string{
+	_ = agentTerm.Start("/bin/zsh", []string{
 		"NOTBBG_SOCKET=/tmp/notbbg.sock",
 		"PS1=$ ",
 		"TERM=dumb",
@@ -161,7 +162,7 @@ func connectionLoop(ctx context.Context, socketPath string, sm *client.ServerMan
 		sendStatus(statusCh, "connected")
 
 		app.SendFrame = func(data []byte) {
-			conn.WriteFrame(data)
+			_ = conn.WriteFrame(data)
 		}
 
 		subMsg, _ := json.Marshal(map[string]any{
@@ -193,7 +194,7 @@ func connectionLoop(ctx context.Context, socketPath string, sm *client.ServerMan
 
 			received++
 			if received >= creditInterval {
-				conn.WriteFrame(creditBuf)
+				_ = conn.WriteFrame(creditBuf)
 				received = 0
 			}
 		}

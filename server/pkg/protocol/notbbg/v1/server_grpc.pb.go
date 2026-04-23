@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	DataService_Subscribe_FullMethodName     = "/notbbg.v1.DataService/Subscribe"
 	DataService_Query_FullMethodName         = "/notbbg.v1.DataService/Query"
+	DataService_GetDataRange_FullMethodName  = "/notbbg.v1.DataService/GetDataRange"
 	DataService_ExportData_FullMethodName    = "/notbbg.v1.DataService/ExportData"
 	DataService_GetFeedStatus_FullMethodName = "/notbbg.v1.DataService/GetFeedStatus"
 )
@@ -35,6 +36,11 @@ type DataServiceClient interface {
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeResponse], error)
 	// Query historical data from the cache.
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error)
+	// GetDataRange streams a window of historical data for a topic,
+	// chunked so the client can render progressively and cancel via the
+	// request's correlation_id (or standard gRPC context cancellation).
+	// Cache is checked first, then datalake. See DATA-PLAN.md §3.
+	GetDataRange(ctx context.Context, in *GetDataRangeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetDataRangeResponse], error)
 	// Export data in bulk (JSON, JSONL, CSV).
 	ExportData(ctx context.Context, in *ExportDataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExportDataResponse], error)
 	// Get current status of all data feeds.
@@ -78,9 +84,28 @@ func (c *dataServiceClient) Query(ctx context.Context, in *QueryRequest, opts ..
 	return out, nil
 }
 
+func (c *dataServiceClient) GetDataRange(ctx context.Context, in *GetDataRangeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetDataRangeResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &DataService_ServiceDesc.Streams[1], DataService_GetDataRange_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetDataRangeRequest, GetDataRangeResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DataService_GetDataRangeClient = grpc.ServerStreamingClient[GetDataRangeResponse]
+
 func (c *dataServiceClient) ExportData(ctx context.Context, in *ExportDataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExportDataResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &DataService_ServiceDesc.Streams[1], DataService_ExportData_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &DataService_ServiceDesc.Streams[2], DataService_ExportData_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +142,11 @@ type DataServiceServer interface {
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeResponse]) error
 	// Query historical data from the cache.
 	Query(context.Context, *QueryRequest) (*QueryResponse, error)
+	// GetDataRange streams a window of historical data for a topic,
+	// chunked so the client can render progressively and cancel via the
+	// request's correlation_id (or standard gRPC context cancellation).
+	// Cache is checked first, then datalake. See DATA-PLAN.md §3.
+	GetDataRange(*GetDataRangeRequest, grpc.ServerStreamingServer[GetDataRangeResponse]) error
 	// Export data in bulk (JSON, JSONL, CSV).
 	ExportData(*ExportDataRequest, grpc.ServerStreamingServer[ExportDataResponse]) error
 	// Get current status of all data feeds.
@@ -136,6 +166,9 @@ func (UnimplementedDataServiceServer) Subscribe(*SubscribeRequest, grpc.ServerSt
 }
 func (UnimplementedDataServiceServer) Query(context.Context, *QueryRequest) (*QueryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Query not implemented")
+}
+func (UnimplementedDataServiceServer) GetDataRange(*GetDataRangeRequest, grpc.ServerStreamingServer[GetDataRangeResponse]) error {
+	return status.Error(codes.Unimplemented, "method GetDataRange not implemented")
 }
 func (UnimplementedDataServiceServer) ExportData(*ExportDataRequest, grpc.ServerStreamingServer[ExportDataResponse]) error {
 	return status.Error(codes.Unimplemented, "method ExportData not implemented")
@@ -193,6 +226,17 @@ func _DataService_Query_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DataService_GetDataRange_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetDataRangeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(DataServiceServer).GetDataRange(m, &grpc.GenericServerStream[GetDataRangeRequest, GetDataRangeResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DataService_GetDataRangeServer = grpc.ServerStreamingServer[GetDataRangeResponse]
+
 func _DataService_ExportData_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ExportDataRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -242,6 +286,11 @@ var DataService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Subscribe",
 			Handler:       _DataService_Subscribe_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "GetDataRange",
+			Handler:       _DataService_GetDataRange_Handler,
 			ServerStreams: true,
 		},
 		{

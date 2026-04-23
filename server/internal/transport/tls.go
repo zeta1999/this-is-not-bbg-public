@@ -167,7 +167,7 @@ func generateSelfSigned(certPath, keyPath string) error {
 		return err
 	}
 	defer certFile.Close()
-	pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	_ = pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 	// Write key.
 	keyDER, err := x509.MarshalECPrivateKey(key)
@@ -179,7 +179,7 @@ func generateSelfSigned(certPath, keyPath string) error {
 		return err
 	}
 	defer keyFile.Close()
-	pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	_ = pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	return nil
 }

@@ -61,6 +61,14 @@ func isBulk(topic string) bool {
 	return strings.HasPrefix(topic, "ohlc.")
 }
 
+// isDropped returns true for topics too high-volume for client relay.
+// Raw trades go to cache + datalake only; clients get trade.agg.* and trade.snap.* instead.
+func isDropped(topic string) bool {
+	return strings.HasPrefix(topic, "trade.") &&
+		!strings.HasPrefix(topic, "trade.agg.") &&
+		!strings.HasPrefix(topic, "trade.snap.")
+}
+
 // splitter reads from the bus subscriber and routes to realtime or bulk channels.
 func (r *clientRelay) splitter(ctx context.Context, sub *bus.Subscriber) {
 	for {
@@ -70,6 +78,9 @@ func (r *clientRelay) splitter(ctx context.Context, sub *bus.Subscriber) {
 		case msg, ok := <-sub.C:
 			if !ok {
 				return
+			}
+			if isDropped(msg.Topic) {
+				continue // raw trades go to cache/datalake only
 			}
 			if isBulk(msg.Topic) {
 				select {
@@ -161,9 +172,9 @@ func (r *clientRelay) sendMsg(msg bus.Message) error {
 	}
 	data, _ := wireMsg.Encode()
 
-	r.conn.SetWriteDeadline(time.Now().Add(writeDeadline))
+	_ = r.conn.SetWriteDeadline(time.Now().Add(writeDeadline))
 	err = r.conn.WriteFrame(data)
-	r.conn.SetWriteDeadline(time.Time{}) // clear deadline
+	_ = r.conn.SetWriteDeadline(time.Time{}) // clear deadline
 	return err
 }
 

@@ -940,6 +940,204 @@ func (x *Subscription) GetFilters() map[string]string {
 	return nil
 }
 
+// SeriesKey identifies a point in a multi-dimensional time series.
+// The `dims` map holds arbitrary key/value dimensions; well-known
+// keys are { type, asset, pair, source, exchange, instrument, tenor,
+// strike, side } by convention, but any dim may be added without
+// breaking compatibility. See DATA-PLAN.md §5.
+type SeriesKey struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Dims          map[string]string      `protobuf:"bytes,1,rep,name=dims,proto3" json:"dims,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SeriesKey) Reset() {
+	*x = SeriesKey{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeriesKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeriesKey) ProtoMessage() {}
+
+func (x *SeriesKey) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeriesKey.ProtoReflect.Descriptor instead.
+func (*SeriesKey) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SeriesKey) GetDims() map[string]string {
+	if x != nil {
+		return x.Dims
+	}
+	return nil
+}
+
+// SeriesPoint is a single timestamped observation for a SeriesKey.
+// The value is an oneof so scalars, structured market data, or
+// arbitrary raw bytes can all be carried.
+type SeriesPoint struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Key   *SeriesKey             `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	T     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=t,proto3" json:"t,omitempty"`
+	// Types that are valid to be assigned to Value:
+	//
+	//	*SeriesPoint_Scalar
+	//	*SeriesPoint_Ohlc
+	//	*SeriesPoint_Lob
+	//	*SeriesPoint_Trade
+	//	*SeriesPoint_Raw
+	Value         isSeriesPoint_Value `protobuf_oneof:"value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SeriesPoint) Reset() {
+	*x = SeriesPoint{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeriesPoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeriesPoint) ProtoMessage() {}
+
+func (x *SeriesPoint) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeriesPoint.ProtoReflect.Descriptor instead.
+func (*SeriesPoint) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SeriesPoint) GetKey() *SeriesKey {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *SeriesPoint) GetT() *timestamppb.Timestamp {
+	if x != nil {
+		return x.T
+	}
+	return nil
+}
+
+func (x *SeriesPoint) GetValue() isSeriesPoint_Value {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *SeriesPoint) GetScalar() float64 {
+	if x != nil {
+		if x, ok := x.Value.(*SeriesPoint_Scalar); ok {
+			return x.Scalar
+		}
+	}
+	return 0
+}
+
+func (x *SeriesPoint) GetOhlc() *OHLC {
+	if x != nil {
+		if x, ok := x.Value.(*SeriesPoint_Ohlc); ok {
+			return x.Ohlc
+		}
+	}
+	return nil
+}
+
+func (x *SeriesPoint) GetLob() *LOBSnapshot {
+	if x != nil {
+		if x, ok := x.Value.(*SeriesPoint_Lob); ok {
+			return x.Lob
+		}
+	}
+	return nil
+}
+
+func (x *SeriesPoint) GetTrade() *Trade {
+	if x != nil {
+		if x, ok := x.Value.(*SeriesPoint_Trade); ok {
+			return x.Trade
+		}
+	}
+	return nil
+}
+
+func (x *SeriesPoint) GetRaw() []byte {
+	if x != nil {
+		if x, ok := x.Value.(*SeriesPoint_Raw); ok {
+			return x.Raw
+		}
+	}
+	return nil
+}
+
+type isSeriesPoint_Value interface {
+	isSeriesPoint_Value()
+}
+
+type SeriesPoint_Scalar struct {
+	Scalar float64 `protobuf:"fixed64,10,opt,name=scalar,proto3,oneof"`
+}
+
+type SeriesPoint_Ohlc struct {
+	Ohlc *OHLC `protobuf:"bytes,11,opt,name=ohlc,proto3,oneof"`
+}
+
+type SeriesPoint_Lob struct {
+	Lob *LOBSnapshot `protobuf:"bytes,12,opt,name=lob,proto3,oneof"`
+}
+
+type SeriesPoint_Trade struct {
+	Trade *Trade `protobuf:"bytes,13,opt,name=trade,proto3,oneof"`
+}
+
+type SeriesPoint_Raw struct {
+	Raw []byte `protobuf:"bytes,14,opt,name=raw,proto3,oneof"`
+}
+
+func (*SeriesPoint_Scalar) isSeriesPoint_Value() {}
+
+func (*SeriesPoint_Ohlc) isSeriesPoint_Value() {}
+
+func (*SeriesPoint_Lob) isSeriesPoint_Value() {}
+
+func (*SeriesPoint_Trade) isSeriesPoint_Value() {}
+
+func (*SeriesPoint_Raw) isSeriesPoint_Value() {}
+
 // Wrapper for any message sent over the bus or wire.
 type Update struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -960,7 +1158,7 @@ type Update struct {
 
 func (x *Update) Reset() {
 	*x = Update{}
-	mi := &file_notbbg_v1_types_proto_msgTypes[8]
+	mi := &file_notbbg_v1_types_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -972,7 +1170,7 @@ func (x *Update) String() string {
 func (*Update) ProtoMessage() {}
 
 func (x *Update) ProtoReflect() protoreflect.Message {
-	mi := &file_notbbg_v1_types_proto_msgTypes[8]
+	mi := &file_notbbg_v1_types_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -985,7 +1183,7 @@ func (x *Update) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Update.ProtoReflect.Descriptor instead.
 func (*Update) Descriptor() ([]byte, []int) {
-	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{8}
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Update) GetTopic() string {
@@ -1183,7 +1381,22 @@ const file_notbbg_v1_types_proto_rawDesc = "" +
 	"\afilters\x18\x02 \x03(\v2$.notbbg.v1.Subscription.FiltersEntryR\afilters\x1a:\n" +
 	"\fFiltersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xef\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"x\n" +
+	"\tSeriesKey\x122\n" +
+	"\x04dims\x18\x01 \x03(\v2\x1e.notbbg.v1.SeriesKey.DimsEntryR\x04dims\x1a7\n" +
+	"\tDimsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x93\x02\n" +
+	"\vSeriesPoint\x12&\n" +
+	"\x03key\x18\x01 \x01(\v2\x14.notbbg.v1.SeriesKeyR\x03key\x12(\n" +
+	"\x01t\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x01t\x12\x18\n" +
+	"\x06scalar\x18\n" +
+	" \x01(\x01H\x00R\x06scalar\x12%\n" +
+	"\x04ohlc\x18\v \x01(\v2\x0f.notbbg.v1.OHLCH\x00R\x04ohlc\x12*\n" +
+	"\x03lob\x18\f \x01(\v2\x16.notbbg.v1.LOBSnapshotH\x00R\x03lob\x12(\n" +
+	"\x05trade\x18\r \x01(\v2\x10.notbbg.v1.TradeH\x00R\x05trade\x12\x12\n" +
+	"\x03raw\x18\x0e \x01(\fH\x00R\x03rawB\a\n" +
+	"\x05value\"\xef\x02\n" +
 	"\x06Update\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12%\n" +
@@ -1232,7 +1445,7 @@ func file_notbbg_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_notbbg_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_notbbg_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_notbbg_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_notbbg_v1_types_proto_goTypes = []any{
 	(Side)(0),                     // 0: notbbg.v1.Side
 	(AlertType)(0),                // 1: notbbg.v1.AlertType
@@ -1246,37 +1459,46 @@ var file_notbbg_v1_types_proto_goTypes = []any{
 	(*Alert)(nil),                 // 9: notbbg.v1.Alert
 	(*FeedStatus)(nil),            // 10: notbbg.v1.FeedStatus
 	(*Subscription)(nil),          // 11: notbbg.v1.Subscription
-	(*Update)(nil),                // 12: notbbg.v1.Update
-	nil,                           // 13: notbbg.v1.Subscription.FiltersEntry
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*SeriesKey)(nil),             // 12: notbbg.v1.SeriesKey
+	(*SeriesPoint)(nil),           // 13: notbbg.v1.SeriesPoint
+	(*Update)(nil),                // 14: notbbg.v1.Update
+	nil,                           // 15: notbbg.v1.Subscription.FiltersEntry
+	nil,                           // 16: notbbg.v1.SeriesKey.DimsEntry
+	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
 }
 var file_notbbg_v1_types_proto_depIdxs = []int32{
-	14, // 0: notbbg.v1.OHLC.timestamp:type_name -> google.protobuf.Timestamp
-	14, // 1: notbbg.v1.LOBSnapshot.timestamp:type_name -> google.protobuf.Timestamp
+	17, // 0: notbbg.v1.OHLC.timestamp:type_name -> google.protobuf.Timestamp
+	17, // 1: notbbg.v1.LOBSnapshot.timestamp:type_name -> google.protobuf.Timestamp
 	5,  // 2: notbbg.v1.LOBSnapshot.bids:type_name -> notbbg.v1.PriceLevel
 	5,  // 3: notbbg.v1.LOBSnapshot.asks:type_name -> notbbg.v1.PriceLevel
-	14, // 4: notbbg.v1.Trade.timestamp:type_name -> google.protobuf.Timestamp
+	17, // 4: notbbg.v1.Trade.timestamp:type_name -> google.protobuf.Timestamp
 	0,  // 5: notbbg.v1.Trade.side:type_name -> notbbg.v1.Side
-	14, // 6: notbbg.v1.NewsItem.published_at:type_name -> google.protobuf.Timestamp
+	17, // 6: notbbg.v1.NewsItem.published_at:type_name -> google.protobuf.Timestamp
 	1,  // 7: notbbg.v1.Alert.type:type_name -> notbbg.v1.AlertType
 	2,  // 8: notbbg.v1.Alert.status:type_name -> notbbg.v1.AlertStatus
-	14, // 9: notbbg.v1.Alert.created_at:type_name -> google.protobuf.Timestamp
-	14, // 10: notbbg.v1.Alert.triggered_at:type_name -> google.protobuf.Timestamp
-	14, // 11: notbbg.v1.FeedStatus.last_update:type_name -> google.protobuf.Timestamp
+	17, // 9: notbbg.v1.Alert.created_at:type_name -> google.protobuf.Timestamp
+	17, // 10: notbbg.v1.Alert.triggered_at:type_name -> google.protobuf.Timestamp
+	17, // 11: notbbg.v1.FeedStatus.last_update:type_name -> google.protobuf.Timestamp
 	3,  // 12: notbbg.v1.FeedStatus.state:type_name -> notbbg.v1.FeedState
-	13, // 13: notbbg.v1.Subscription.filters:type_name -> notbbg.v1.Subscription.FiltersEntry
-	14, // 14: notbbg.v1.Update.timestamp:type_name -> google.protobuf.Timestamp
-	4,  // 15: notbbg.v1.Update.ohlc:type_name -> notbbg.v1.OHLC
-	6,  // 16: notbbg.v1.Update.lob:type_name -> notbbg.v1.LOBSnapshot
-	7,  // 17: notbbg.v1.Update.trade:type_name -> notbbg.v1.Trade
-	8,  // 18: notbbg.v1.Update.news:type_name -> notbbg.v1.NewsItem
-	9,  // 19: notbbg.v1.Update.alert:type_name -> notbbg.v1.Alert
-	10, // 20: notbbg.v1.Update.feed_status:type_name -> notbbg.v1.FeedStatus
-	21, // [21:21] is the sub-list for method output_type
-	21, // [21:21] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	15, // 13: notbbg.v1.Subscription.filters:type_name -> notbbg.v1.Subscription.FiltersEntry
+	16, // 14: notbbg.v1.SeriesKey.dims:type_name -> notbbg.v1.SeriesKey.DimsEntry
+	12, // 15: notbbg.v1.SeriesPoint.key:type_name -> notbbg.v1.SeriesKey
+	17, // 16: notbbg.v1.SeriesPoint.t:type_name -> google.protobuf.Timestamp
+	4,  // 17: notbbg.v1.SeriesPoint.ohlc:type_name -> notbbg.v1.OHLC
+	6,  // 18: notbbg.v1.SeriesPoint.lob:type_name -> notbbg.v1.LOBSnapshot
+	7,  // 19: notbbg.v1.SeriesPoint.trade:type_name -> notbbg.v1.Trade
+	17, // 20: notbbg.v1.Update.timestamp:type_name -> google.protobuf.Timestamp
+	4,  // 21: notbbg.v1.Update.ohlc:type_name -> notbbg.v1.OHLC
+	6,  // 22: notbbg.v1.Update.lob:type_name -> notbbg.v1.LOBSnapshot
+	7,  // 23: notbbg.v1.Update.trade:type_name -> notbbg.v1.Trade
+	8,  // 24: notbbg.v1.Update.news:type_name -> notbbg.v1.NewsItem
+	9,  // 25: notbbg.v1.Update.alert:type_name -> notbbg.v1.Alert
+	10, // 26: notbbg.v1.Update.feed_status:type_name -> notbbg.v1.FeedStatus
+	27, // [27:27] is the sub-list for method output_type
+	27, // [27:27] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_notbbg_v1_types_proto_init() }
@@ -1284,7 +1506,14 @@ func file_notbbg_v1_types_proto_init() {
 	if File_notbbg_v1_types_proto != nil {
 		return
 	}
-	file_notbbg_v1_types_proto_msgTypes[8].OneofWrappers = []any{
+	file_notbbg_v1_types_proto_msgTypes[9].OneofWrappers = []any{
+		(*SeriesPoint_Scalar)(nil),
+		(*SeriesPoint_Ohlc)(nil),
+		(*SeriesPoint_Lob)(nil),
+		(*SeriesPoint_Trade)(nil),
+		(*SeriesPoint_Raw)(nil),
+	}
+	file_notbbg_v1_types_proto_msgTypes[10].OneofWrappers = []any{
 		(*Update_Ohlc)(nil),
 		(*Update_Lob)(nil),
 		(*Update_Trade)(nil),
@@ -1298,7 +1527,7 @@ func file_notbbg_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notbbg_v1_types_proto_rawDesc), len(file_notbbg_v1_types_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   10,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

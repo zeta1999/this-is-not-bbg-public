@@ -1,0 +1,12 @@
+name: voltools
+command: ./voltools
+args: []
+input_topics:
+  - "ohlc.binance.*"
+  - "plugin.voltools.input"
+output_topics:
+  - "plugin.voltools.screen"
+screens:
+  - id: "VOLTOOLS"
+    label: "Vol Surface"
+    icon: "analytics-outline"

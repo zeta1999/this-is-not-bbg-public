@@ -132,7 +132,7 @@ func main() {
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(connStr)
+		_ = enc.Encode(connStr)
 		fmt.Fprintf(os.Stderr, "\nStart collector with this token:\n")
 		fmt.Fprintf(os.Stderr, "  NOTBBG_TOKEN=%s ./bin/notbbg-collector -config %s\n\n", token, *configPath)
 		return
@@ -215,7 +215,7 @@ func handleServerConnection(ctx context.Context, conn *transport.FramedConn, msg
 		slog.Warn("expected pair message", "got", msg.Type)
 		resp := &transport.WireMsg{Type: transport.MsgPairFail, Error: "pair required"}
 		data, _ := resp.Encode()
-		conn.WriteFrame(data)
+		_ = conn.WriteFrame(data)
 		return
 	}
 
@@ -227,7 +227,7 @@ func handleServerConnection(ctx context.Context, conn *transport.FramedConn, msg
 			slog.Warn("session reconnect rejected", "error", err, "remote", conn.RemoteAddr())
 			resp := &transport.WireMsg{Type: transport.MsgPairFail, Error: err.Error()}
 			data, _ := resp.Encode()
-			conn.WriteFrame(data)
+			_ = conn.WriteFrame(data)
 			return
 		}
 		sessionID = msg.SessionID
@@ -240,7 +240,7 @@ func handleServerConnection(ctx context.Context, conn *transport.FramedConn, msg
 			slog.Warn("pairing rejected", "error", pairErr, "remote", conn.RemoteAddr())
 			resp := &transport.WireMsg{Type: transport.MsgPairFail, Error: pairErr.Error()}
 			data, _ := resp.Encode()
-			conn.WriteFrame(data)
+			_ = conn.WriteFrame(data)
 			return
 		}
 		slog.Info("server paired successfully", "remote", conn.RemoteAddr(), "session", sessionID[:8])
@@ -255,7 +255,7 @@ func handleServerConnection(ctx context.Context, conn *transport.FramedConn, msg
 
 	resp := &transport.WireMsg{Type: transport.MsgPairOK, SessionID: sessionID}
 	data, _ := resp.Encode()
-	conn.WriteFrame(data)
+	_ = conn.WriteFrame(data)
 
 	// Receive data loop — server pushes updates.
 	received := 0
@@ -279,7 +279,7 @@ func handleServerConnection(ctx context.Context, conn *transport.FramedConn, msg
 
 		// Republish to internal bus → datalake writer picks it up.
 		var payload any
-		json.Unmarshal(wireMsg.Payload, &payload)
+		_ = json.Unmarshal(wireMsg.Payload, &payload)
 		msgBus.Publish(bus.Message{
 			Topic:   wireMsg.Topic,
 			Payload: payload,

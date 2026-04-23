@@ -92,13 +92,13 @@ func (a *HyperliquidAdapter) connectAndStream(ctx context.Context) error {
 			"method": "subscribe",
 			"subscription": map[string]any{"type": "trades", "coin": sym},
 		})
-		conn.WriteMessage(websocket.TextMessage, sub)
+		_ = conn.WriteMessage(websocket.TextMessage, sub)
 
 		sub2, _ := json.Marshal(map[string]any{
 			"method": "subscribe",
 			"subscription": map[string]any{"type": "l2Book", "coin": sym},
 		})
-		conn.WriteMessage(websocket.TextMessage, sub2)
+		_ = conn.WriteMessage(websocket.TextMessage, sub2)
 	}
 
 	a.mu.Lock()

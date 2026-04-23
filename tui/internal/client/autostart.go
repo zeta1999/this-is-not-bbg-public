@@ -101,7 +101,7 @@ func (sm *ServerManager) EnsureRunning() (bool, error) {
 	sm.done = make(chan struct{})
 
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		close(sm.done)
 	}()
 
@@ -121,7 +121,7 @@ func (sm *ServerManager) Kill() {
 
 	// Try graceful shutdown first (SIGTERM).
 	slog.Info("stopping managed server", "pid", cmd.Process.Pid)
-	cmd.Process.Signal(syscall.SIGTERM)
+	_ = cmd.Process.Signal(syscall.SIGTERM)
 
 	// Wait up to 3 seconds for graceful exit.
 	select {
@@ -137,7 +137,7 @@ func (sm *ServerManager) Kill() {
 
 	// Force kill.
 	slog.Warn("server didn't stop gracefully, sending SIGKILL")
-	cmd.Process.Kill()
+	_ = cmd.Process.Kill()
 
 	// Wait for process to fully exit (release file locks, etc).
 	select {
@@ -189,7 +189,7 @@ func ConnectWithRetry(ctx context.Context, socketPath string, sm *ServerManager,
 			if onStatus != nil {
 				onStatus("Restarting server...")
 			}
-			sm.EnsureRunning()
+			_, _ = sm.EnsureRunning()
 		}
 
 		// Backoff: 200ms for first 25 attempts (5s), then 1s, cap at 5s.

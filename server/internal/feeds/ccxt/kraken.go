@@ -206,7 +206,7 @@ func (a *KrakenAdapter) processMessage(raw []byte) {
 	switch msg.Channel {
 	case "trade":
 		var trades []krakenTrade
-		json.Unmarshal(msg.Data, &trades)
+		_ = json.Unmarshal(msg.Data, &trades)
 		for _, t := range trades {
 			sym := normalizeKrakenSymbol(t.Symbol)
 			ts, _ := time.Parse(time.RFC3339Nano, t.Time)
@@ -227,7 +227,7 @@ func (a *KrakenAdapter) processMessage(raw []byte) {
 
 	case "ohlc":
 		var candles []krakenOHLC
-		json.Unmarshal(msg.Data, &candles)
+		_ = json.Unmarshal(msg.Data, &candles)
 		for _, c := range candles {
 			sym := normalizeKrakenSymbol(c.Symbol)
 			ts, _ := time.Parse(time.RFC3339Nano, c.Timestamp)
@@ -250,7 +250,7 @@ func (a *KrakenAdapter) processMessage(raw []byte) {
 
 	case "book":
 		var books []krakenBook
-		json.Unmarshal(msg.Data, &books)
+		_ = json.Unmarshal(msg.Data, &books)
 		for _, b := range books {
 			sym := normalizeKrakenSymbol(b.Symbol)
 

@@ -20,7 +20,9 @@ const (
 	MsgPairFail    MsgType = "pair_fail"
 	MsgCreateAlert  MsgType = "create_alert"
 	MsgAlertCreated MsgType = "alert_created"
-	MsgCredit       MsgType = "credit" // TUI→server: grant N bulk credits
+	MsgCredit          MsgType = "credit"          // TUI→server: grant N bulk credits
+	MsgScreenRegistry  MsgType = "screen_registry" // server→client: available plugin screens
+	MsgPluginInput     MsgType = "plugin_input"    // TUI→server: plugin cell input event
 )
 
 // WireMsg is the envelope for all messages between server and client.

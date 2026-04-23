@@ -18,18 +18,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ScreenDef describes a screen (tab) that a plugin contributes.
+type ScreenDef struct {
+	ID    string `yaml:"id"    json:"id"`
+	Label string `yaml:"label" json:"label"`
+	Icon  string `yaml:"icon"  json:"icon"`
+}
+
+// ScreenInfo combines ScreenDef with runtime metadata.
+type ScreenInfo struct {
+	ID     string `json:"id"`
+	Plugin string `json:"plugin"`
+	Label  string `json:"label"`
+	Icon   string `json:"icon"`
+	Topic  string `json:"topic"` // "plugin.<name>.screen"
+}
+
 // Manifest describes a plugin's configuration.
 type Manifest struct {
-	Name         string   `yaml:"name"`
-	Command      string   `yaml:"command"`
-	Args         []string `yaml:"args"`
-	InputTopics  []string `yaml:"input_topics"`
-	OutputTopics []string `yaml:"output_topics"`
+	Name         string      `yaml:"name"`
+	Command      string      `yaml:"command"`
+	Args         []string    `yaml:"args"`
+	InputTopics  []string    `yaml:"input_topics"`
+	OutputTopics []string    `yaml:"output_topics"`
+	Screens      []ScreenDef `yaml:"screens"`
 }
 
 // Plugin represents a running or stopped plugin process.
 type Plugin struct {
 	manifest Manifest
+	dir      string // directory containing the plugin binary and manifest
 	cmd      *exec.Cmd
 	bus      *bus.Bus
 	cancel   context.CancelFunc
@@ -88,6 +106,7 @@ func (m *Manager) LoadAll() error {
 		m.mu.Lock()
 		m.plugins[manifest.Name] = &Plugin{
 			manifest: manifest,
+			dir:      filepath.Join(m.dir, entry.Name()),
 			bus:      m.bus,
 		}
 		m.mu.Unlock()
@@ -134,6 +153,61 @@ func (m *Manager) List() map[string]bool {
 	return result
 }
 
+// Screens returns the merged list of screen definitions from all loaded plugins.
+func (m *Manager) Screens() []ScreenInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var screens []ScreenInfo
+	for _, p := range m.plugins {
+		for _, s := range p.manifest.Screens {
+			screens = append(screens, ScreenInfo{
+				ID:     s.ID,
+				Plugin: p.manifest.Name,
+				Label:  s.Label,
+				Icon:   s.Icon,
+				Topic:  "plugin." + p.manifest.Name + ".screen",
+			})
+		}
+	}
+	return screens
+}
+
+// PublishRegistry sends the current screen registry to the bus so clients
+// can discover available plugin tabs.
+func (m *Manager) PublishRegistry() {
+	screens := m.Screens()
+	m.bus.Publish(bus.Message{
+		Topic:   "plugin.registry",
+		Payload: map[string]any{"screens": screens},
+	})
+	slog.Debug("published plugin registry", "screens", len(screens))
+}
+
+// StartAll starts all loaded plugins and publishes the screen registry.
+func (m *Manager) StartAll(ctx context.Context) error {
+	m.mu.RLock()
+	names := make([]string, 0, len(m.plugins))
+	for name := range m.plugins {
+		names = append(names, name)
+	}
+	m.mu.RUnlock()
+
+	for _, name := range names {
+		if err := m.Start(name); err != nil {
+			slog.Warn("failed to start plugin", "name", name, "error", err)
+		}
+	}
+	m.PublishRegistry()
+
+	// Block until context is cancelled.
+	<-ctx.Done()
+	// Stop all plugins.
+	for _, name := range names {
+		_ = m.Stop(name)
+	}
+	return nil
+}
+
 // Start launches the plugin process and begins piping messages.
 func (p *Plugin) Start() error {
 	p.mu.Lock()
@@ -147,6 +221,8 @@ func (p *Plugin) Start() error {
 	p.cancel = cancel
 
 	cmd := exec.CommandContext(ctx, p.manifest.Command, p.manifest.Args...)
+	cmd.Dir = p.dir // run from plugin directory so ./binary works
+	slog.Info("plugin starting", "name", p.manifest.Name, "cmd", p.manifest.Command, "dir", p.dir)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -196,9 +272,10 @@ func (p *Plugin) Start() error {
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 		for scanner.Scan() {
+			raw := scanner.Bytes()
 			var msg bus.Message
-			if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-				slog.Debug("plugin output parse error", "name", p.manifest.Name, "error", err)
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				slog.Warn("plugin output parse error", "name", p.manifest.Name, "error", err)
 				continue
 			}
 			p.bus.Publish(msg)
@@ -212,7 +289,7 @@ func (p *Plugin) Start() error {
 		if ctx.Err() == nil { // Not intentionally stopped.
 			slog.Warn("plugin exited, restarting", "name", p.manifest.Name)
 			time.Sleep(5 * time.Second)
-			p.Start()
+			_ = p.Start()
 		}
 	}()
 
@@ -228,8 +305,8 @@ func (p *Plugin) Stop() {
 		p.cancel()
 	}
 	if p.cmd != nil && p.cmd.Process != nil {
-		p.cmd.Process.Kill()
-		p.cmd.Wait()
+		_ = p.cmd.Process.Kill()
+		_ = p.cmd.Wait()
 	}
 	p.running = false
 	slog.Info("plugin stopped", "name", p.manifest.Name)

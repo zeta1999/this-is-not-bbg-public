@@ -396,6 +396,221 @@ func (x *QueryResponse) GetAlerts() []*Alert {
 	return nil
 }
 
+// GetDataRangeRequest — client asks the server to stream a time window
+// of historical data for a topic. See DATA-PLAN.md §3. Named per
+// buf's STANDARD lint rule ("RPC request types should be named
+// <Method>Request"); semantically this is a data-range request.
+type GetDataRangeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"` // e.g. "ohlc.binance.BTCUSDT"
+	From          *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=from,proto3" json:"from,omitempty"`
+	To            *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=to,proto3" json:"to,omitempty"`
+	Resolution    string                 `protobuf:"bytes,4,opt,name=resolution,proto3" json:"resolution,omitempty"`                            // e.g. "1m", "1h", "1d"
+	CorrelationId string                 `protobuf:"bytes,5,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"` // client-supplied ID for progress + cancellation
+	MaxRecords    int32                  `protobuf:"varint,6,opt,name=max_records,json=maxRecords,proto3" json:"max_records,omitempty"`         // 0 = server default cap
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDataRangeRequest) Reset() {
+	*x = GetDataRangeRequest{}
+	mi := &file_notbbg_v1_server_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDataRangeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDataRangeRequest) ProtoMessage() {}
+
+func (x *GetDataRangeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_server_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDataRangeRequest.ProtoReflect.Descriptor instead.
+func (*GetDataRangeRequest) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetDataRangeRequest) GetTopic() string {
+	if x != nil {
+		return x.Topic
+	}
+	return ""
+}
+
+func (x *GetDataRangeRequest) GetFrom() *timestamppb.Timestamp {
+	if x != nil {
+		return x.From
+	}
+	return nil
+}
+
+func (x *GetDataRangeRequest) GetTo() *timestamppb.Timestamp {
+	if x != nil {
+		return x.To
+	}
+	return nil
+}
+
+func (x *GetDataRangeRequest) GetResolution() string {
+	if x != nil {
+		return x.Resolution
+	}
+	return ""
+}
+
+func (x *GetDataRangeRequest) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *GetDataRangeRequest) GetMaxRecords() int32 {
+	if x != nil {
+		return x.MaxRecords
+	}
+	return 0
+}
+
+// GetDataRangeResponse — one streamed chunk. Final chunk has eof=true.
+// Named per buf's STANDARD lint rule; semantically each message is a
+// progress chunk, not a single response.
+type GetDataRangeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Records       []*Update              `protobuf:"bytes,2,rep,name=records,proto3" json:"records,omitempty"`
+	Seq           int32                  `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"` // 0-based chunk index; useful for "loading N/M"
+	Eof           bool                   `protobuf:"varint,4,opt,name=eof,proto3" json:"eof,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDataRangeResponse) Reset() {
+	*x = GetDataRangeResponse{}
+	mi := &file_notbbg_v1_server_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDataRangeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDataRangeResponse) ProtoMessage() {}
+
+func (x *GetDataRangeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_server_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDataRangeResponse.ProtoReflect.Descriptor instead.
+func (*GetDataRangeResponse) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetDataRangeResponse) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *GetDataRangeResponse) GetRecords() []*Update {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+func (x *GetDataRangeResponse) GetSeq() int32 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *GetDataRangeResponse) GetEof() bool {
+	if x != nil {
+		return x.Eof
+	}
+	return false
+}
+
+// DataRangeError — a terminal error for a correlation_id, sent by the
+// server before closing the stream. Not an RPC request/response type
+// (not referenced in a service definition), so the STANDARD lint rule
+// does not apply.
+type DataRangeError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DataRangeError) Reset() {
+	*x = DataRangeError{}
+	mi := &file_notbbg_v1_server_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DataRangeError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DataRangeError) ProtoMessage() {}
+
+func (x *DataRangeError) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_server_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DataRangeError.ProtoReflect.Descriptor instead.
+func (*DataRangeError) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *DataRangeError) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *DataRangeError) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 type ExportDataRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Query         *QueryRequest          `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`
@@ -407,7 +622,7 @@ type ExportDataRequest struct {
 
 func (x *ExportDataRequest) Reset() {
 	*x = ExportDataRequest{}
-	mi := &file_notbbg_v1_server_proto_msgTypes[4]
+	mi := &file_notbbg_v1_server_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -419,7 +634,7 @@ func (x *ExportDataRequest) String() string {
 func (*ExportDataRequest) ProtoMessage() {}
 
 func (x *ExportDataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_notbbg_v1_server_proto_msgTypes[4]
+	mi := &file_notbbg_v1_server_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -432,7 +647,7 @@ func (x *ExportDataRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportDataRequest.ProtoReflect.Descriptor instead.
 func (*ExportDataRequest) Descriptor() ([]byte, []int) {
-	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{4}
+	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ExportDataRequest) GetQuery() *QueryRequest {
@@ -465,7 +680,7 @@ type ExportDataResponse struct {
 
 func (x *ExportDataResponse) Reset() {
 	*x = ExportDataResponse{}
-	mi := &file_notbbg_v1_server_proto_msgTypes[5]
+	mi := &file_notbbg_v1_server_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -477,7 +692,7 @@ func (x *ExportDataResponse) String() string {
 func (*ExportDataResponse) ProtoMessage() {}
 
 func (x *ExportDataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_notbbg_v1_server_proto_msgTypes[5]
+	mi := &file_notbbg_v1_server_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -490,7 +705,7 @@ func (x *ExportDataResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportDataResponse.ProtoReflect.Descriptor instead.
 func (*ExportDataResponse) Descriptor() ([]byte, []int) {
-	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{5}
+	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ExportDataResponse) GetData() []byte {
@@ -508,7 +723,7 @@ type GetFeedStatusRequest struct {
 
 func (x *GetFeedStatusRequest) Reset() {
 	*x = GetFeedStatusRequest{}
-	mi := &file_notbbg_v1_server_proto_msgTypes[6]
+	mi := &file_notbbg_v1_server_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -520,7 +735,7 @@ func (x *GetFeedStatusRequest) String() string {
 func (*GetFeedStatusRequest) ProtoMessage() {}
 
 func (x *GetFeedStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_notbbg_v1_server_proto_msgTypes[6]
+	mi := &file_notbbg_v1_server_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -533,7 +748,7 @@ func (x *GetFeedStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFeedStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetFeedStatusRequest) Descriptor() ([]byte, []int) {
-	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{6}
+	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{9}
 }
 
 type GetFeedStatusResponse struct {
@@ -545,7 +760,7 @@ type GetFeedStatusResponse struct {
 
 func (x *GetFeedStatusResponse) Reset() {
 	*x = GetFeedStatusResponse{}
-	mi := &file_notbbg_v1_server_proto_msgTypes[7]
+	mi := &file_notbbg_v1_server_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +772,7 @@ func (x *GetFeedStatusResponse) String() string {
 func (*GetFeedStatusResponse) ProtoMessage() {}
 
 func (x *GetFeedStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_notbbg_v1_server_proto_msgTypes[7]
+	mi := &file_notbbg_v1_server_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +785,7 @@ func (x *GetFeedStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFeedStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetFeedStatusResponse) Descriptor() ([]byte, []int) {
-	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{7}
+	return file_notbbg_v1_server_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetFeedStatusResponse) GetFeeds() []*FeedStatus {
@@ -605,7 +820,25 @@ const file_notbbg_v1_server_proto_rawDesc = "" +
 	"\x06trades\x18\x02 \x03(\v2\x10.notbbg.v1.TradeR\x06trades\x12(\n" +
 	"\x03lob\x18\x03 \x03(\v2\x16.notbbg.v1.LOBSnapshotR\x03lob\x12'\n" +
 	"\x04news\x18\x04 \x03(\v2\x13.notbbg.v1.NewsItemR\x04news\x12(\n" +
-	"\x06alerts\x18\x05 \x03(\v2\x10.notbbg.v1.AlertR\x06alerts\"\x87\x01\n" +
+	"\x06alerts\x18\x05 \x03(\v2\x10.notbbg.v1.AlertR\x06alerts\"\xef\x01\n" +
+	"\x13GetDataRangeRequest\x12\x14\n" +
+	"\x05topic\x18\x01 \x01(\tR\x05topic\x12.\n" +
+	"\x04from\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x04from\x12*\n" +
+	"\x02to\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x02to\x12\x1e\n" +
+	"\n" +
+	"resolution\x18\x04 \x01(\tR\n" +
+	"resolution\x12%\n" +
+	"\x0ecorrelation_id\x18\x05 \x01(\tR\rcorrelationId\x12\x1f\n" +
+	"\vmax_records\x18\x06 \x01(\x05R\n" +
+	"maxRecords\"\x8e\x01\n" +
+	"\x14GetDataRangeResponse\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12+\n" +
+	"\arecords\x18\x02 \x03(\v2\x11.notbbg.v1.UpdateR\arecords\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x05R\x03seq\x12\x10\n" +
+	"\x03eof\x18\x04 \x01(\bR\x03eof\"O\n" +
+	"\x0eDataRangeError\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x87\x01\n" +
 	"\x11ExportDataRequest\x12-\n" +
 	"\x05query\x18\x01 \x01(\v2\x17.notbbg.v1.QueryRequestR\x05query\x12/\n" +
 	"\x06format\x18\x02 \x01(\x0e2\x17.notbbg.v1.ExportFormatR\x06format\x12\x12\n" +
@@ -626,10 +859,11 @@ const file_notbbg_v1_server_proto_rawDesc = "" +
 	"\x19EXPORT_FORMAT_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12EXPORT_FORMAT_JSON\x10\x01\x12\x17\n" +
 	"\x13EXPORT_FORMAT_JSONL\x10\x02\x12\x15\n" +
-	"\x11EXPORT_FORMAT_CSV\x10\x032\xb4\x02\n" +
+	"\x11EXPORT_FORMAT_CSV\x10\x032\x87\x03\n" +
 	"\vDataService\x12H\n" +
 	"\tSubscribe\x12\x1b.notbbg.v1.SubscribeRequest\x1a\x1c.notbbg.v1.SubscribeResponse0\x01\x12:\n" +
-	"\x05Query\x12\x17.notbbg.v1.QueryRequest\x1a\x18.notbbg.v1.QueryResponse\x12K\n" +
+	"\x05Query\x12\x17.notbbg.v1.QueryRequest\x1a\x18.notbbg.v1.QueryResponse\x12Q\n" +
+	"\fGetDataRange\x12\x1e.notbbg.v1.GetDataRangeRequest\x1a\x1f.notbbg.v1.GetDataRangeResponse0\x01\x12K\n" +
 	"\n" +
 	"ExportData\x12\x1c.notbbg.v1.ExportDataRequest\x1a\x1d.notbbg.v1.ExportDataResponse0\x01\x12R\n" +
 	"\rGetFeedStatus\x12\x1f.notbbg.v1.GetFeedStatusRequest\x1a .notbbg.v1.GetFeedStatusResponseB.Z,github.com/notbbg/notbbg/server/pkg/protocolb\x06proto3"
@@ -647,7 +881,7 @@ func file_notbbg_v1_server_proto_rawDescGZIP() []byte {
 }
 
 var file_notbbg_v1_server_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_notbbg_v1_server_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_notbbg_v1_server_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_notbbg_v1_server_proto_goTypes = []any{
 	(QueryType)(0),                // 0: notbbg.v1.QueryType
 	(ExportFormat)(0),             // 1: notbbg.v1.ExportFormat
@@ -655,47 +889,55 @@ var file_notbbg_v1_server_proto_goTypes = []any{
 	(*SubscribeResponse)(nil),     // 3: notbbg.v1.SubscribeResponse
 	(*QueryRequest)(nil),          // 4: notbbg.v1.QueryRequest
 	(*QueryResponse)(nil),         // 5: notbbg.v1.QueryResponse
-	(*ExportDataRequest)(nil),     // 6: notbbg.v1.ExportDataRequest
-	(*ExportDataResponse)(nil),    // 7: notbbg.v1.ExportDataResponse
-	(*GetFeedStatusRequest)(nil),  // 8: notbbg.v1.GetFeedStatusRequest
-	(*GetFeedStatusResponse)(nil), // 9: notbbg.v1.GetFeedStatusResponse
-	(*Subscription)(nil),          // 10: notbbg.v1.Subscription
-	(*Update)(nil),                // 11: notbbg.v1.Update
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
-	(*OHLC)(nil),                  // 13: notbbg.v1.OHLC
-	(*Trade)(nil),                 // 14: notbbg.v1.Trade
-	(*LOBSnapshot)(nil),           // 15: notbbg.v1.LOBSnapshot
-	(*NewsItem)(nil),              // 16: notbbg.v1.NewsItem
-	(*Alert)(nil),                 // 17: notbbg.v1.Alert
-	(*FeedStatus)(nil),            // 18: notbbg.v1.FeedStatus
+	(*GetDataRangeRequest)(nil),   // 6: notbbg.v1.GetDataRangeRequest
+	(*GetDataRangeResponse)(nil),  // 7: notbbg.v1.GetDataRangeResponse
+	(*DataRangeError)(nil),        // 8: notbbg.v1.DataRangeError
+	(*ExportDataRequest)(nil),     // 9: notbbg.v1.ExportDataRequest
+	(*ExportDataResponse)(nil),    // 10: notbbg.v1.ExportDataResponse
+	(*GetFeedStatusRequest)(nil),  // 11: notbbg.v1.GetFeedStatusRequest
+	(*GetFeedStatusResponse)(nil), // 12: notbbg.v1.GetFeedStatusResponse
+	(*Subscription)(nil),          // 13: notbbg.v1.Subscription
+	(*Update)(nil),                // 14: notbbg.v1.Update
+	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
+	(*OHLC)(nil),                  // 16: notbbg.v1.OHLC
+	(*Trade)(nil),                 // 17: notbbg.v1.Trade
+	(*LOBSnapshot)(nil),           // 18: notbbg.v1.LOBSnapshot
+	(*NewsItem)(nil),              // 19: notbbg.v1.NewsItem
+	(*Alert)(nil),                 // 20: notbbg.v1.Alert
+	(*FeedStatus)(nil),            // 21: notbbg.v1.FeedStatus
 }
 var file_notbbg_v1_server_proto_depIdxs = []int32{
-	10, // 0: notbbg.v1.SubscribeRequest.subscriptions:type_name -> notbbg.v1.Subscription
-	11, // 1: notbbg.v1.SubscribeResponse.update:type_name -> notbbg.v1.Update
+	13, // 0: notbbg.v1.SubscribeRequest.subscriptions:type_name -> notbbg.v1.Subscription
+	14, // 1: notbbg.v1.SubscribeResponse.update:type_name -> notbbg.v1.Update
 	0,  // 2: notbbg.v1.QueryRequest.type:type_name -> notbbg.v1.QueryType
-	12, // 3: notbbg.v1.QueryRequest.from:type_name -> google.protobuf.Timestamp
-	12, // 4: notbbg.v1.QueryRequest.to:type_name -> google.protobuf.Timestamp
-	13, // 5: notbbg.v1.QueryResponse.ohlc:type_name -> notbbg.v1.OHLC
-	14, // 6: notbbg.v1.QueryResponse.trades:type_name -> notbbg.v1.Trade
-	15, // 7: notbbg.v1.QueryResponse.lob:type_name -> notbbg.v1.LOBSnapshot
-	16, // 8: notbbg.v1.QueryResponse.news:type_name -> notbbg.v1.NewsItem
-	17, // 9: notbbg.v1.QueryResponse.alerts:type_name -> notbbg.v1.Alert
-	4,  // 10: notbbg.v1.ExportDataRequest.query:type_name -> notbbg.v1.QueryRequest
-	1,  // 11: notbbg.v1.ExportDataRequest.format:type_name -> notbbg.v1.ExportFormat
-	18, // 12: notbbg.v1.GetFeedStatusResponse.feeds:type_name -> notbbg.v1.FeedStatus
-	2,  // 13: notbbg.v1.DataService.Subscribe:input_type -> notbbg.v1.SubscribeRequest
-	4,  // 14: notbbg.v1.DataService.Query:input_type -> notbbg.v1.QueryRequest
-	6,  // 15: notbbg.v1.DataService.ExportData:input_type -> notbbg.v1.ExportDataRequest
-	8,  // 16: notbbg.v1.DataService.GetFeedStatus:input_type -> notbbg.v1.GetFeedStatusRequest
-	3,  // 17: notbbg.v1.DataService.Subscribe:output_type -> notbbg.v1.SubscribeResponse
-	5,  // 18: notbbg.v1.DataService.Query:output_type -> notbbg.v1.QueryResponse
-	7,  // 19: notbbg.v1.DataService.ExportData:output_type -> notbbg.v1.ExportDataResponse
-	9,  // 20: notbbg.v1.DataService.GetFeedStatus:output_type -> notbbg.v1.GetFeedStatusResponse
-	17, // [17:21] is the sub-list for method output_type
-	13, // [13:17] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	15, // 3: notbbg.v1.QueryRequest.from:type_name -> google.protobuf.Timestamp
+	15, // 4: notbbg.v1.QueryRequest.to:type_name -> google.protobuf.Timestamp
+	16, // 5: notbbg.v1.QueryResponse.ohlc:type_name -> notbbg.v1.OHLC
+	17, // 6: notbbg.v1.QueryResponse.trades:type_name -> notbbg.v1.Trade
+	18, // 7: notbbg.v1.QueryResponse.lob:type_name -> notbbg.v1.LOBSnapshot
+	19, // 8: notbbg.v1.QueryResponse.news:type_name -> notbbg.v1.NewsItem
+	20, // 9: notbbg.v1.QueryResponse.alerts:type_name -> notbbg.v1.Alert
+	15, // 10: notbbg.v1.GetDataRangeRequest.from:type_name -> google.protobuf.Timestamp
+	15, // 11: notbbg.v1.GetDataRangeRequest.to:type_name -> google.protobuf.Timestamp
+	14, // 12: notbbg.v1.GetDataRangeResponse.records:type_name -> notbbg.v1.Update
+	4,  // 13: notbbg.v1.ExportDataRequest.query:type_name -> notbbg.v1.QueryRequest
+	1,  // 14: notbbg.v1.ExportDataRequest.format:type_name -> notbbg.v1.ExportFormat
+	21, // 15: notbbg.v1.GetFeedStatusResponse.feeds:type_name -> notbbg.v1.FeedStatus
+	2,  // 16: notbbg.v1.DataService.Subscribe:input_type -> notbbg.v1.SubscribeRequest
+	4,  // 17: notbbg.v1.DataService.Query:input_type -> notbbg.v1.QueryRequest
+	6,  // 18: notbbg.v1.DataService.GetDataRange:input_type -> notbbg.v1.GetDataRangeRequest
+	9,  // 19: notbbg.v1.DataService.ExportData:input_type -> notbbg.v1.ExportDataRequest
+	11, // 20: notbbg.v1.DataService.GetFeedStatus:input_type -> notbbg.v1.GetFeedStatusRequest
+	3,  // 21: notbbg.v1.DataService.Subscribe:output_type -> notbbg.v1.SubscribeResponse
+	5,  // 22: notbbg.v1.DataService.Query:output_type -> notbbg.v1.QueryResponse
+	7,  // 23: notbbg.v1.DataService.GetDataRange:output_type -> notbbg.v1.GetDataRangeResponse
+	10, // 24: notbbg.v1.DataService.ExportData:output_type -> notbbg.v1.ExportDataResponse
+	12, // 25: notbbg.v1.DataService.GetFeedStatus:output_type -> notbbg.v1.GetFeedStatusResponse
+	21, // [21:26] is the sub-list for method output_type
+	16, // [16:21] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_notbbg_v1_server_proto_init() }
@@ -710,7 +952,7 @@ func file_notbbg_v1_server_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notbbg_v1_server_proto_rawDesc), len(file_notbbg_v1_server_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   8,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

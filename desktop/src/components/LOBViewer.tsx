@@ -9,6 +9,13 @@ interface Props {
   setActiveIdx: (idx: number) => void;
 }
 
+function formatAge(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) return `${Math.floor(seconds)}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ago`;
+}
+
 export const LOBViewer: React.FC<Props> = ({ lobData, lobKeys, activeIdx, setActiveIdx }) => {
   const [search, setSearch] = useState("");
   const activeKey = lobKeys[activeIdx] || "";
@@ -30,8 +37,15 @@ export const LOBViewer: React.FC<Props> = ({ lobData, lobKeys, activeIdx, setAct
       {/* Header */}
       <div style={s.header}>
         <span style={s.instrument}>{snap?.instrument || "—"}</span>
-        <span style={s.exchange}>{snap?.exchange || ""}</span>
+        {snap?.exchange && (
+          <span style={s.exchangeBadge}>{snap.exchange.toUpperCase()}</span>
+        )}
         <span style={s.spread}>Spread: ${spread.toFixed(2)}</span>
+        {snap?.lastUpdate && (
+          <span style={s.freshness} title="Last update">
+            {formatAge(Date.now() / 1000 - snap.lastUpdate)}
+          </span>
+        )}
       </div>
 
       <div style={s.body}>
@@ -106,7 +120,18 @@ const s: Record<string, React.CSSProperties> = {
   header: { display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", background: "#0D0D0D", borderBottom: `1px solid ${colors.border}`, flexShrink: 0 },
   instrument: { fontSize: 14, fontWeight: 900, color: colors.amber, fontFamily: fonts.mono },
   exchange: { fontSize: 10, color: colors.dimText, fontFamily: fonts.mono },
+  exchangeBadge: {
+    fontSize: 10,
+    fontWeight: 800,
+    color: colors.bg,
+    background: colors.amber,
+    padding: "2px 8px",
+    borderRadius: 3,
+    letterSpacing: "0.08em",
+    fontFamily: fonts.mono,
+  },
   spread: { fontSize: 10, color: colors.amber, marginLeft: "auto", fontFamily: fonts.mono },
+  freshness: { fontSize: 10, color: colors.dimText, fontFamily: fonts.mono },
   body: { display: "flex", flex: 1, overflow: "hidden" },
   book: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
   empty: { padding: 20, color: colors.dimText, fontFamily: fonts.mono, fontSize: 12 },

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -75,7 +74,7 @@ func TestEndToEnd(t *testing.T) {
 	if err := ln.Start(); err != nil {
 		t.Fatalf("start listener: %v", err)
 	}
-	defer ln.Stop()
+	defer func() { _ = ln.Stop() }()
 
 	// Wait for socket.
 	time.Sleep(50 * time.Millisecond)
@@ -107,7 +106,7 @@ func TestEndToEnd(t *testing.T) {
 	})
 
 	// Read response.
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	frame, err := fc.ReadFrame()
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -126,7 +125,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	var payload map[string]string
-	json.Unmarshal(received.Payload, &payload)
+	_ = json.Unmarshal(received.Payload, &payload)
 	if payload["msg"] != "world" {
 		t.Errorf("expected msg=world, got %s", payload["msg"])
 	}
@@ -137,12 +136,12 @@ func TestEndToEnd(t *testing.T) {
 		Payload: "should not arrive",
 	})
 
-	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	_, err = fc.ReadFrame()
 	if err == nil {
 		t.Error("expected timeout for non-matching topic, but received data")
 	}
-	if !os.IsTimeout(err) && err.Error() != "i/o timeout" {
-		// Accept both timeout and EOF.
-	}
+	// Accept either timeout or EOF — the point is no data arrived, not
+	// which exact error we saw.
+	_ = err
 }

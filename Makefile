@@ -19,6 +19,15 @@ build-server:
 build-collector:
 	cd server && go build -trimpath -o ../bin/notbbg-collector ./cmd/notbbg-collector
 
+build-schemacheck:
+	cd server && go build -trimpath -o ../bin/schemacheck ./cmd/schemacheck
+
+build-datasoak:
+	cd server && go build -trimpath -o ../bin/datasoak ./cmd/datasoak
+
+build-datamigrate:
+	cd server && go build -trimpath -o ../bin/datamigrate ./cmd/datamigrate
+
 # --- TUI / CLI ---
 
 build-tui:
@@ -26,7 +35,7 @@ build-tui:
 
 # --- All builds ---
 
-build: build-server build-collector build-tui
+build: build-server build-collector build-schemacheck build-tui
 
 # --- Distribution (per os/arch with config) ---
 

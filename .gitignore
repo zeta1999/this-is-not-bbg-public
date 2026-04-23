@@ -4,7 +4,6 @@ bin/
 *.enc
 node_modules/
 dist/
-desktop/src-tauri/target/
 phone/.expo/
 phone/node_modules/
 dist/

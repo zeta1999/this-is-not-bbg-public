@@ -65,6 +65,48 @@ func TestUnsubscribeClosesChannel(t *testing.T) {
 	}
 }
 
+func TestDropCounters_FullSubscriber(t *testing.T) {
+	b := New(10)
+	// Tiny channel buffer so we can easily overflow.
+	sub := b.Subscribe(2, "ohlc.*.*")
+
+	for i := 0; i < 20; i++ {
+		b.Publish(Message{Topic: "ohlc.binance.BTCUSDT", Payload: i})
+	}
+
+	// The subscriber never reads, so anything past the 2-slot buffer
+	// should be counted as dropped.
+	got := sub.Dropped()
+	if got < 10 {
+		t.Errorf("subscriber dropped=%d, want >=10", got)
+	}
+	stats := b.Stats()
+	if stats.Dropped < got {
+		t.Errorf("bus.Stats.Dropped=%d < sub.Dropped=%d", stats.Dropped, got)
+	}
+
+	b.Unsubscribe(sub)
+}
+
+func TestDropCounters_ZeroWhenNoOverflow(t *testing.T) {
+	b := New(10)
+	sub := b.Subscribe(10, "news")
+	b.Publish(Message{Topic: "news", Payload: "hi"})
+	// Read promptly.
+	select {
+	case <-sub.C:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("expected delivery")
+	}
+	if d := sub.Dropped(); d != 0 {
+		t.Errorf("sub.Dropped=%d, want 0", d)
+	}
+	if s := b.Stats().Dropped; s != 0 {
+		t.Errorf("bus.Stats.Dropped=%d, want 0", s)
+	}
+	b.Unsubscribe(sub)
+}
+
 func TestNoMatchNoDelivery(t *testing.T) {
 	b := New(10)
 	sub := b.Subscribe(10, "ohlc.binance.*")

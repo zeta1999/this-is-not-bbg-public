@@ -36,6 +36,51 @@ export interface AlertEntry {
   id: string; type: string; instrument: string; status: string; timestamp: number;
 }
 
+export interface PluginScreen {
+  id: string; plugin: string; label: string; icon: string; topic: string;
+}
+
+export interface PluginStyledLine {
+  text: string; style: string;
+}
+
+export interface CellAddress { row: number; col: number; }
+export interface CellStyle { fg?: string; bg?: string; bold?: boolean; italic?: boolean; underline?: boolean; }
+export interface EnumOption { value: string; label: string; }
+export interface PluginCell {
+  address: CellAddress;
+  style?: CellStyle;
+  type: string; // "text", "input_decimal", "input_enum", "number", etc.
+  text?: string;
+  label?: string;
+  value?: any;
+  precision?: number;
+  unit?: string;
+  delta?: string;
+  options?: EnumOption[];
+  expression?: string;
+  component_id?: string;
+  visible_when?: string;
+  col_span?: number;
+  row_span?: number;
+}
+
+// Trade aggregates (server-computed, not raw trades).
+export interface TradeAgg {
+  Instrument: string; Exchange: string;
+  Count: number; Volume: number; BuyVolume: number; SellVolume: number;
+  VWAP: number; Open: number; High: number; Low: number; Close: number;
+  Turnover: number; P25: number; P50: number; P75: number;
+}
+
+export interface TradeSnapEntry {
+  Price: number; Quantity: number; Side: string; Timestamp: string;
+}
+
+export interface TradeSnapData {
+  Instrument: string; Exchange: string; Trades: TradeSnapEntry[];
+}
+
 // === Store interface ===
 
 export interface Store {
@@ -53,7 +98,24 @@ export interface Store {
   alertItems: AlertEntry[];
   feedStatuses: FeedStatus[];
   logLines: string[];
+  tradeAggs: Record<string, TradeAgg>;        // key: exchange/instrument
+  tradeSnaps: Record<string, TradeSnapData>;  // key: exchange/instrument
+  tradeKeys: string[];
+  pluginScreens: PluginScreen[];
+  pluginLines: Record<string, PluginStyledLine[]>;
+  pluginCells: Record<string, PluginCell[]>;
+  msgCount: number; // total SSE messages received this session, capped at 50000 (TUI parity)
   fetchOHLCHistory: (instrument: string, exchange: string, tf: string) => Promise<void>;
+
+  // Progressive history over /api/v1/datarange — streams NDJSON
+  // chunks into the candles buffer so the chart renders what we
+  // have as we have it, instead of blocking on a single snapshot.
+  fetchOHLCHistoryStreaming: (instrument: string, exchange: string, tf: string, hours?: number) => Promise<void>;
+
+  // key format: "INSTRUMENT|EXCHANGE|TF". Set to chunks-received
+  // count while streaming, absent when idle. Component renders a
+  // spinner from this map.
+  ohlcLoading: Record<string, number>;
 }
 
 // === Helpers ===
@@ -81,6 +143,14 @@ export function useStore(): Store {
   const [alertItems, setAlertItems] = useState<AlertEntry[]>([]);
   const [feedStatuses, setFeedStatuses] = useState<FeedStatus[]>([]);
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [tradeAggs, setTradeAggs] = useState<Record<string, TradeAgg>>({});
+  const [tradeSnaps, setTradeSnaps] = useState<Record<string, TradeSnapData>>({});
+  const [tradeKeys, setTradeKeys] = useState<string[]>([]);
+  const [pluginScreens, setPluginScreens] = useState<PluginScreen[]>([]);
+  const [pluginLines, setPluginLines] = useState<Record<string, PluginStyledLine[]>>({});
+  const [pluginCells, setPluginCells] = useState<Record<string, PluginCell[]>>({});
+  const [ohlcLoading, setOhlcLoading] = useState<Record<string, number>>({});
+  const [msgCount, setMsgCount] = useState(0);
 
   const cycleTF = useCallback((dir: number) => {
     setOhlcData((prev) => {
@@ -101,7 +171,7 @@ export function useStore(): Store {
 
   useEffect(() => {
     const token = getToken();
-    const url = `http://localhost:9474/api/v1/subscribe?patterns=ohlc.*.*,lob.*.*,news,alert,feed.status,server.log&token=${token}`;
+    const url = `http://localhost:9474/api/v1/subscribe?patterns=ohlc.*.*,lob.*.*,trade.agg.*.*,trade.snap.*.*,news,alert,feed.status,server.log,plugin.*,plugin.*.*&token=${token}`;
 
     console.log("[store] connecting SSE", url.substring(0, 80));
     const es = new EventSource(url);
@@ -134,6 +204,12 @@ export function useStore(): Store {
         const msg = JSON.parse(ev.data);
         const topic: string = msg._topic || "";
         const p = msg._payload || {};
+        // Mirror TUI: counter tops out at 50K so long sessions don't
+        // bloat state updates. TopBar shows "10234 msgs" / "50000+".
+        setMsgCount((c) => (c >= 50000 ? 50000 : c + 1));
+        if (topic.startsWith("plugin")) {
+          console.log("[store] plugin msg:", topic, JSON.stringify(p).substring(0, 100));
+        }
 
         // === handleServerData — same logic as TUI app.go ===
 
@@ -194,6 +270,45 @@ export function useStore(): Store {
             if (idx >= 0) { const next = [...prev]; next[idx] = entry; return next; }
             return [...prev, entry].sort((a, b) => a.name.localeCompare(b.name));
           });
+
+        } else if (topic.startsWith("trade.agg.")) {
+          const agg = p as TradeAgg;
+          const key = `${agg.Exchange}/${agg.Instrument}`;
+          setTradeAggs((prev) => ({ ...prev, [key]: agg }));
+          setTradeKeys((prev) => prev.includes(key) ? prev : [...prev, key].sort());
+
+        } else if (topic.startsWith("trade.snap.")) {
+          const snap = p as TradeSnapData;
+          const key = `${snap.Exchange}/${snap.Instrument}`;
+          setTradeSnaps((prev) => ({ ...prev, [key]: snap }));
+
+        } else if (topic === "plugin.registry") {
+          console.log("[store] plugin.registry received", p.screens?.length, "screens");
+          setPluginScreens(p.screens || []);
+
+        } else if (topic.startsWith("plugin.") && topic.endsWith(".screen")) {
+          // Cell grid mode (cellgrid/v1).
+          if (p.version === "cellgrid/v1" && Array.isArray(p.cells)) {
+            setPluginCells((prev) => {
+              if (p.full_replace) {
+                return { ...prev, [topic]: p.cells };
+              }
+              // Incremental merge.
+              const existing = prev[topic] || [];
+              const idx = new Map(existing.map((c: PluginCell, i: number) => [`${c.address.row},${c.address.col}`, i]));
+              const merged = [...existing];
+              for (const c of p.cells as PluginCell[]) {
+                const key = `${c.address.row},${c.address.col}`;
+                const i = idx.get(key);
+                if (i !== undefined) { merged[i] = c; } else { merged.push(c); }
+              }
+              return { ...prev, [topic]: merged };
+            });
+          } else {
+            // Legacy styled-line mode.
+            const lines: PluginStyledLine[] = (p.lines || []).map((l: any) => ({ text: l.text || "", style: l.style || "normal" }));
+            setPluginLines((prev) => ({ ...prev, [topic]: lines }));
+          }
         }
       } catch { /* skip bad JSON */ }
     };
@@ -240,10 +355,109 @@ export function useStore(): Store {
     } catch {}
   }, []);
 
+  // Progressive streaming fetch — reads /api/v1/datarange as NDJSON
+  // and appends chunks to the candles buffer as they arrive. Sets
+  // ohlcLoading[key] to the live chunk count while in flight. Each
+  // chunk triggers one React update, so the chart re-renders
+  // incrementally.
+  const fetchOHLCHistoryStreaming = useCallback(async (instrument: string, exchange: string, tf: string, hours = 24) => {
+    const token = getToken();
+    const loadKey = `${instrument}|${exchange}|${tf}`;
+    if (ohlcLoading[loadKey] !== undefined) return; // already running
+    setOhlcLoading((prev) => ({ ...prev, [loadKey]: 0 }));
+
+    try {
+      const to = new Date();
+      const from = new Date(to.getTime() - hours * 3600 * 1000);
+      const q = new URLSearchParams({
+        topic: `ohlc.${exchange}.${instrument}`,
+        from: from.toISOString().replace(/\.\d+Z$/, "Z"),
+        to: to.toISOString().replace(/\.\d+Z$/, "Z"),
+        correlation_id: loadKey,
+        max_records: "5000",
+        token,
+      });
+      const resp = await fetch(`http://localhost:9474/api/v1/datarange?${q.toString()}`);
+      if (!resp.ok || !resp.body) {
+        console.warn("[store] datarange bad response", resp.status);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let chunks = 0;
+      const key = instrumentKey(instrument, exchange);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // NDJSON: split on newlines, keep the trailing partial.
+        let idx: number;
+        while ((idx = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          if (!line.trim()) continue;
+
+          let chunk: any;
+          try { chunk = JSON.parse(line); } catch { continue; }
+
+          if (chunk.EOF) continue;
+
+          const records: any[] = chunk.Records || [];
+          if (records.length === 0) continue;
+
+          // Parse the payload for each record; filter by tf.
+          const newCandles: Candle[] = [];
+          for (const r of records) {
+            let p: any;
+            try { p = typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload; }
+            catch { continue; }
+            if (!p) continue;
+            if ((p.Timeframe || "1m") !== tf) continue;
+            let ts: number;
+            if (typeof p.Timestamp === "string") ts = Math.floor(new Date(p.Timestamp).getTime() / 1000);
+            else ts = p.Timestamp > 1e12 ? Math.floor(p.Timestamp / 1000) : p.Timestamp;
+            newCandles.push({ time: ts, open: p.Open, high: p.High, low: p.Low, close: p.Close, volume: p.Volume || 0 });
+          }
+          if (newCandles.length === 0) continue;
+
+          chunks++;
+          setOhlcLoading((prev) => ({ ...prev, [loadKey]: chunks }));
+          setOhlcData((prev) => {
+            const m = new Map(prev);
+            const inst = m.get(key);
+            if (!inst) return prev;
+            const tfs = new Map(inst.timeframes);
+            const existing = tfs.get(tf) || [];
+            const merged = [...newCandles, ...existing];
+            const deduped = Array.from(new Map(merged.map((c) => [c.time, c])).values())
+              .sort((a, b) => a.time - b.time).slice(-2000);
+            tfs.set(tf, deduped);
+            m.set(key, { ...inst, timeframes: tfs, activeTF: tf });
+            return m;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[store] datarange stream error", e);
+    } finally {
+      setOhlcLoading((prev) => {
+        const next = { ...prev };
+        delete next[loadKey];
+        return next;
+      });
+    }
+  }, [ohlcLoading]);
+
   return {
     connected, ohlcData, ohlcKeys, ohlcActiveIdx, setOhlcActiveIdx, cycleTF,
     lobData, lobKeys, lobActiveIdx, setLobActiveIdx,
     newsItems, alertItems, feedStatuses, logLines,
-    fetchOHLCHistory,
+    tradeAggs, tradeSnaps, tradeKeys,
+    pluginScreens, pluginLines, pluginCells,
+    fetchOHLCHistory, fetchOHLCHistoryStreaming, ohlcLoading, msgCount,
   };
 }

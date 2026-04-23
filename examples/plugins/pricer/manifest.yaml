@@ -1,0 +1,12 @@
+name: pricer
+command: ./pricer
+args: []
+input_topics:
+  - "ohlc.binance.*"
+  - "plugin.pricer.input"
+output_topics:
+  - "plugin.pricer.screen"
+screens:
+  - id: "PRICER"
+    label: "Pricer"
+    icon: "calculator-outline"

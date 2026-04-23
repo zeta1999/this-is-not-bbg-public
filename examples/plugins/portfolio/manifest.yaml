@@ -1,0 +1,12 @@
+name: portfolio
+command: ./portfolio
+args: []
+input_topics:
+  - "ohlc.binance.*"
+  - "plugin.portfolio.input"
+output_topics:
+  - "plugin.portfolio.screen"
+screens:
+  - id: "PORTFOLIO"
+    label: "Portfolio"
+    icon: "pie-chart-outline"

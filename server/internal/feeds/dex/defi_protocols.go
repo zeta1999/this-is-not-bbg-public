@@ -151,7 +151,7 @@ func (a *DefiProtocolAdapter) fetch(ctx context.Context) {
 	a.bytesRecv += uint64(resp.ContentLength)
 	a.mu.Unlock()
 
-	slog.Debug(a.name+" fetched", "tokens", published)
+	slog.Info(a.name+" fetched", "tokens", published)
 }
 
 // NewGMXAdapter tracks GMX protocol tokens (Arbitrum + Avalanche perps DEX).

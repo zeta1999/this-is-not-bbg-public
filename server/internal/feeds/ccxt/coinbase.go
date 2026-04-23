@@ -191,7 +191,7 @@ func (a *CoinbaseAdapter) processMessage(raw []byte) {
 	switch msg.Channel {
 	case "market_trades":
 		var events []coinbaseTradeEvent
-		json.Unmarshal(msg.Events, &events)
+		_ = json.Unmarshal(msg.Events, &events)
 		for _, ev := range events {
 			for _, t := range ev.Trades {
 				price, _ := strconv.ParseFloat(t.Price, 64)
@@ -215,7 +215,7 @@ func (a *CoinbaseAdapter) processMessage(raw []byte) {
 
 	case "candles":
 		var events []coinbaseCandleEvent
-		json.Unmarshal(msg.Events, &events)
+		_ = json.Unmarshal(msg.Events, &events)
 		for _, ev := range events {
 			for _, c := range ev.Candles {
 				open, _ := strconv.ParseFloat(c.Open, 64)

@@ -28,7 +28,7 @@ func (m *Manager) PersistTo(db *bolt.DB) error {
 			if err != nil {
 				continue
 			}
-			b.Put([]byte(id), data)
+			_ = b.Put([]byte(id), data)
 		}
 		return nil
 	})

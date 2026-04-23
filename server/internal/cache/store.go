@@ -188,7 +188,7 @@ func (s *Store) Evict() error {
 // DBSizeBytes returns the current database file size in bytes.
 func (s *Store) DBSizeBytes() int64 {
 	var size int64
-	s.db.View(func(tx *bolt.Tx) error {
+	_ = s.db.View(func(tx *bolt.Tx) error {
 		size = tx.Size()
 		return nil
 	})

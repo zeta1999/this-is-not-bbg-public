@@ -1,0 +1,14 @@
+name: monitor
+command: ./monitor
+args: []
+input_topics:
+  - "ohlc.*.*"
+  - "lob.*.*"
+  - "trade.*.*"
+  - "feed.status"
+output_topics:
+  - "plugin.monitor.screen"
+screens:
+  - id: "FEEDS"
+    label: "Feed Monitor"
+    icon: "pulse-outline"

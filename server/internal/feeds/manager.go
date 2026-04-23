@@ -71,6 +71,25 @@ type LOBSnapshot struct {
 	Asks           []LOBLevel
 }
 
+// BackfillRequest is a user-visible ask for historical data that the
+// live feeds don't hold in memory. Served by adapters that implement
+// Backfiller.
+type BackfillRequest struct {
+	Instrument string
+	Exchange   string
+	Timeframe  string // "1m", "1h", "1d" for OHLC
+	From       time.Time
+	To         time.Time
+	Limit      int // 0 = adapter default cap
+}
+
+// Backfiller is an optional capability — adapters that can fetch
+// historical OHLC pages (e.g. CCXT fetchOHLCV) implement it. The
+// coordinator in internal/feeds/backfill type-asserts on this.
+type Backfiller interface {
+	BackfillHistorical(ctx context.Context, req BackfillRequest) ([]OHLC, error)
+}
+
 // Manager supervises all feed adapters, handling lifecycle and health reporting.
 type Manager struct {
 	bus      *bus.Bus

@@ -100,7 +100,9 @@ Examples:
 			case "jsonl":
 				enc := json.NewEncoder(os.Stdout)
 				for _, r := range results {
-					enc.Encode(r)
+					if err := enc.Encode(r); err != nil {
+						return err
+					}
 				}
 				return nil
 			default:

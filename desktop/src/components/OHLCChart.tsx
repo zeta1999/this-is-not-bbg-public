@@ -11,15 +11,21 @@ interface Props {
   setActiveIdx: (idx: number) => void;
   cycleTF: (dir: number) => void;
   fetchOHLCHistory?: (instrument: string, exchange: string, tf: string) => Promise<void>;
+  fetchOHLCHistoryStreaming?: (instrument: string, exchange: string, tf: string, hours?: number) => Promise<void>;
+  ohlcLoading?: Record<string, number>;
 }
 
 const TF_ORDER = ["1m", "5m", "15m", "1h", "4h", "1d", "spot"];
 
-export const OHLCChart: React.FC<Props> = ({ ohlcData, ohlcKeys, activeIdx, setActiveIdx, cycleTF, fetchOHLCHistory }) => {
+export const OHLCChart: React.FC<Props> = ({ ohlcData, ohlcKeys, activeIdx, setActiveIdx, cycleTF, fetchOHLCHistory, fetchOHLCHistoryStreaming, ohlcLoading }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [search, setSearch] = useState("");
+  // Remember which (instrument|exchange|tf) pairs have already
+  // auto-backfilled so we don't re-fetch on every re-render. Lives
+  // in a ref so updates don't re-trigger effects.
+  const autoBackfilledRef = useRef<Set<string>>(new Set());
 
   const activeKey = ohlcKeys[activeIdx] || "";
   const activeInst = ohlcData.get(activeKey);
@@ -69,6 +75,24 @@ export const OHLCChart: React.FC<Props> = ({ ohlcData, ohlcKeys, activeIdx, setA
     ro.observe(chartContainerRef.current);
     return () => { ro.disconnect(); try { chart.remove(); } catch {} chartRef.current = null; seriesRef.current = null; };
   }, []);
+
+  // Auto-backfill last 24h on first view of an (instrument, tf)
+  // pair when the live buffer is sparse. Mirrors the TUI's H key
+  // but runs automatically so the chart isn't empty on fresh
+  // connect. Non-blocking — the streaming fetch populates the
+  // chart as chunks arrive.
+  useEffect(() => {
+    if (!activeInst || !fetchOHLCHistoryStreaming) return;
+    const pairKey = `${activeInst.instrument}|${activeInst.exchange}|${activeTF}`;
+    if (autoBackfilledRef.current.has(pairKey)) return;
+    if (candles.length >= 50) {
+      // Already has a usable live buffer — skip the backfill.
+      autoBackfilledRef.current.add(pairKey);
+      return;
+    }
+    autoBackfilledRef.current.add(pairKey);
+    fetchOHLCHistoryStreaming(activeInst.instrument, activeInst.exchange, activeTF, 24).catch(() => {});
+  }, [activeInst, activeTF, candles.length, fetchOHLCHistoryStreaming]);
 
   // Update chart data — re-render on candles OR timeframe change.
   useEffect(() => {
@@ -130,6 +154,21 @@ export const OHLCChart: React.FC<Props> = ({ ohlcData, ohlcKeys, activeIdx, setA
             {fmtPrice(lastPrice)}  {change >= 0 ? "+" : ""}{change.toFixed(2)}%
           </span>
         )}
+        {activeInst && fetchOHLCHistoryStreaming && (() => {
+          const loadKey = `${activeInst.instrument}|${activeInst.exchange}|${activeTF}`;
+          const loadingChunks = ohlcLoading?.[loadKey];
+          const isLoading = loadingChunks !== undefined;
+          return (
+            <button
+              onClick={() => { if (!isLoading) fetchOHLCHistoryStreaming(activeInst.instrument, activeInst.exchange, activeTF, 24); }}
+              disabled={isLoading}
+              title="Load 24h history via streaming DataRange (non-blocking)"
+              style={{ ...s.tfBtn, ...(isLoading ? { color: colors.amber, borderColor: colors.amber } : {}) }}
+            >
+              {isLoading ? `⟳ ${loadingChunks}` : "Load 24h"}
+            </button>
+          );
+        })()}
         <span style={s.count}>{candles.length} candles</span>
       </div>
 

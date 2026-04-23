@@ -1,0 +1,12 @@
+name: timeseries
+command: ./timeseries
+args: []
+input_topics:
+  - "ohlc.binance.*"
+  - "plugin.timeseries.input"
+output_topics:
+  - "plugin.timeseries.screen"
+screens:
+  - id: "TSERIES"
+    label: "Time Series"
+    icon: "stats-chart-outline"

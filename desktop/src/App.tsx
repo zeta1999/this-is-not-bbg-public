@@ -7,17 +7,23 @@ import { AlertsPanel } from "./components/AlertsPanel";
 import { MonitorPanel } from "./components/MonitorPanel";
 import { LogPanel } from "./components/LogPanel";
 import { AgentPanel } from "./components/AgentPanel";
+import { PluginPanel } from "./components/PluginPanel";
+import { CellGridPanel } from "./components/CellGridPanel";
+import { TradesPanel } from "./components/TradesPanel";
 import { PairModal } from "./components/PairModal";
-import { useStore } from "./store";
+import { useStore, PluginScreen } from "./store";
 
-const TABS = ["OHLC", "LOB", "NEWS", "ALERTS", "MON", "LOG", "AGENT"] as const;
-type Tab = typeof TABS[number];
+const CORE_TABS = ["OHLC", "LOB", "TRADES", "NEWS", "ALERTS", "MON", "LOG", "AGENT"] as const;
+type CoreTab = typeof CORE_TABS[number];
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<Tab>("OHLC");
+  const [activeTab, setActiveTab] = useState<string>("OHLC");
   const [clock, setClock] = useState("");
   const [showPair, setShowPair] = useState(false);
   const store = useStore();
+
+  // Build dynamic tab list: core tabs + plugin screens.
+  const allTabs: string[] = [...CORE_TABS, ...store.pluginScreens.map((s) => s.id)];
 
   // Clock — update every second.
   useEffect(() => {
@@ -37,9 +43,10 @@ const App: React.FC = () => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-      // 1-7: jump to panel.
-      if (e.key >= "1" && e.key <= "7") {
-        setActiveTab(TABS[parseInt(e.key) - 1]);
+      // 1-9: jump to panel.
+      if (e.key >= "1" && e.key <= "9") {
+        const idx = parseInt(e.key) - 1;
+        if (idx < allTabs.length) setActiveTab(allTabs[idx]);
         return;
       }
 
@@ -47,8 +54,8 @@ const App: React.FC = () => {
       if (e.key === "Tab") {
         e.preventDefault();
         setActiveTab((prev) => {
-          const idx = TABS.indexOf(prev);
-          return TABS[(idx + (e.shiftKey ? -1 : 1) + TABS.length) % TABS.length];
+          const idx = allTabs.indexOf(prev);
+          return allTabs[(idx + (e.shiftKey ? -1 : 1) + allTabs.length) % allTabs.length];
         });
         return;
       }
@@ -78,17 +85,31 @@ const App: React.FC = () => {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, store]);
+  }, [activeTab, store, allTabs]);
 
   const renderPanel = () => {
     switch (activeTab) {
-      case "OHLC": return <OHLCChart ohlcData={store.ohlcData} ohlcKeys={store.ohlcKeys} activeIdx={store.ohlcActiveIdx} setActiveIdx={store.setOhlcActiveIdx} cycleTF={store.cycleTF} fetchOHLCHistory={store.fetchOHLCHistory} />;
+      case "OHLC": return <OHLCChart ohlcData={store.ohlcData} ohlcKeys={store.ohlcKeys} activeIdx={store.ohlcActiveIdx} setActiveIdx={store.setOhlcActiveIdx} cycleTF={store.cycleTF} fetchOHLCHistory={store.fetchOHLCHistory} fetchOHLCHistoryStreaming={store.fetchOHLCHistoryStreaming} ohlcLoading={store.ohlcLoading} />;
       case "LOB": return <LOBViewer lobData={store.lobData} lobKeys={store.lobKeys} activeIdx={store.lobActiveIdx} setActiveIdx={store.setLobActiveIdx} />;
+      case "TRADES": return <TradesPanel aggs={store.tradeAggs} snaps={store.tradeSnaps} keys={store.tradeKeys} />;
       case "NEWS": return <NewsPanel items={store.newsItems} />;
       case "ALERTS": return <AlertsPanel items={store.alertItems} />;
       case "MON": return <MonitorPanel feeds={store.feedStatuses} />;
       case "LOG": return <LogPanel lines={store.logLines} />;
       case "AGENT": return <AgentPanel />;
+      default: {
+        // Check if this is a plugin screen.
+        const ps = store.pluginScreens.find((s) => s.id === activeTab);
+        if (ps) {
+          // Prefer cell grid if available, fallback to legacy styled lines.
+          const cells = store.pluginCells[ps.topic];
+          if (cells && cells.length > 0) {
+            return <CellGridPanel label={ps.label} cells={cells} screenTopic={ps.topic} screenId={ps.id} />;
+          }
+          return <PluginPanel label={ps.label} lines={store.pluginLines[ps.topic] || []} />;
+        }
+        return null;
+      }
     }
   };
 
@@ -104,12 +125,13 @@ const App: React.FC = () => {
       <div style={s.topBar}>
         <span style={s.brand}>NOTBBG</span>
         <span style={s.brandSub}>TERMINAL</span>
-        {TABS.map((tab) => (
+        {allTabs.map((tab) => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             style={{ ...s.tab, ...(tab === activeTab ? s.tabActive : {}) }}>
             {tab}
           </button>
         ))}
+        <span style={s.msgs}>{store.msgCount >= 50000 ? "50000+ msgs" : `${store.msgCount} msgs`}</span>
         <span style={s.clock}>{clock}</span>
         <button style={s.pairBtn} onClick={() => setShowPair(true)} title="Phone pairing">📱</button>
         <span style={{ ...s.connDot, background: store.connected ? colors.green : colors.red }} />
@@ -126,7 +148,7 @@ const App: React.FC = () => {
 
       {/* Bottom bar */}
       <div style={s.bottomBar}>
-        <span>TAB:switch  1-7:panels{panelHint}  |  {store.connected ? "CONNECTED" : "DISCONNECTED"} | localhost:9474 (SSE)</span>
+        <span>TAB:switch  1-{allTabs.length}:panels{panelHint}  |  {store.connected ? "CONNECTED" : "DISCONNECTED"} | localhost:9474 (SSE)</span>
         <span>{store.ohlcKeys.length} instruments | {store.newsItems.length} news | notbbg v0.2.0</span>
       </div>
     </div>
@@ -140,7 +162,8 @@ const s: Record<string, React.CSSProperties> = {
   brandSub: { fontSize: 9, color: colors.dimText, letterSpacing: "0.15em", marginRight: 12 },
   tab: { fontFamily: fonts.mono, fontSize: 11, fontWeight: 700, padding: "5px 12px", background: "none", border: `1px solid transparent`, color: colors.dimText, cursor: "pointer", borderRadius: 2 },
   tabActive: { color: colors.amber, borderColor: colors.amber, background: "#1A1200" },
-  clock: { marginLeft: "auto", fontSize: 12, color: colors.amber, letterSpacing: "0.05em" },
+  msgs: { marginLeft: "auto", fontSize: 10, color: colors.dimText, letterSpacing: "0.04em" },
+  clock: { fontSize: 12, color: colors.amber, letterSpacing: "0.05em" },
   connDot: { width: 8, height: 8, borderRadius: "50%", marginLeft: 8 },
   pairBtn: { background: "none", border: "none", fontSize: 14, cursor: "pointer", padding: "2px 6px", marginLeft: 8 },
   connText: { fontSize: 10, fontWeight: 700, marginLeft: 4 },

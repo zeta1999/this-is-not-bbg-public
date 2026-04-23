@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -59,13 +60,27 @@ func pluginListCmd() *cobra.Command {
 					Command string   `yaml:"command"`
 					Input   []string `yaml:"input_topics"`
 					Output  []string `yaml:"output_topics"`
+					Screens []struct {
+						ID    string `yaml:"id"`
+						Label string `yaml:"label"`
+					} `yaml:"screens"`
 				}
-				yaml.Unmarshal(data, &m)
+				_ = yaml.Unmarshal(data, &m)
 				name := m.Name
 				if name == "" {
 					name = e.Name()
 				}
-				fmt.Printf("  %-20s  cmd=%s  in=%v  out=%v\n", name, m.Command, m.Input, m.Output)
+				screenIDs := ""
+				for _, s := range m.Screens {
+					if screenIDs != "" {
+						screenIDs += ","
+					}
+					screenIDs += s.ID
+				}
+				if screenIDs == "" {
+					screenIDs = "(none)"
+				}
+				fmt.Printf("  %-20s  cmd=%s  screens=%s  in=%v  out=%v\n", name, m.Command, screenIDs, m.Input, m.Output)
 			}
 			return nil
 		},
@@ -90,8 +105,15 @@ func pluginInitCmd() *cobra.Command {
 				"name":          name,
 				"command":       fmt.Sprintf("./%s", name),
 				"args":          []string{},
-				"input_topics":  []string{"news"},
-				"output_topics": []string{fmt.Sprintf("news.%s", name)},
+				"input_topics":  []string{"ohlc.binance.*"},
+				"output_topics": []string{fmt.Sprintf("plugin.%s.screen", name)},
+				"screens": []map[string]string{
+					{
+						"id":    strings.ToUpper(name),
+						"label": name,
+						"icon":  "flash-outline",
+					},
+				},
 			}
 
 			data, _ := yaml.Marshal(manifest)

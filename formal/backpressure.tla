@@ -93,6 +93,23 @@ ClientAck ==
     /\ senderState' = "idle"
     /\ UNCHANGED <<bulkQueue, realtimeQueue, sent, dropped>>
 
+\* --- Client flips timeframe mid-stream: the active DataRangeRequest
+\*     is cancelled. Any bulk messages still queued for the old
+\*     correlation_id are discarded, and the credits they had been
+\*     holding are returned to the pool so the next request starts
+\*     with a fresh budget. Realtime queue is untouched — it is not
+\*     correlation-scoped. Mirrors DATA-PLAN.md §3 + §2
+\*     "InvalidateOnSwitch" action. ---
+InvalidateOnSwitch ==
+    /\ bulkQueue > 0
+    /\ bulkQueue' = 0
+    \* Credits aren't literally 'returned' in the server (they just
+    \* were never spent past SendBulk), but for the model we reset
+    \* to MaxCredits to express "next request starts fresh".
+    /\ credits' = MaxCredits
+    /\ senderState' = "idle"
+    /\ UNCHANGED <<realtimeQueue, sent, dropped, clientAcked>>
+
 \* --- Combined next-state relation ---
 Next ==
     \/ PublishBulk
@@ -101,8 +118,11 @@ Next ==
     \/ SendBulk
     \/ WaitForCredits
     \/ ClientAck
+    \/ InvalidateOnSwitch
 
-\* --- Fairness: eventually the client will ack ---
+\* --- Fairness: eventually the client will ack. InvalidateOnSwitch
+\*     is explicitly NOT fair — we model it as a user action that
+\*     may or may not fire. ---
 Fairness == WF_vars(ClientAck) /\ WF_vars(SendRealtime) /\ WF_vars(SendBulk)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
@@ -117,6 +137,14 @@ NoDeadlock ==
     \/ (bulkQueue > 0 /\ credits > 0)  \* Can send bulk
     \/ (bulkQueue = 0 /\ realtimeQueue = 0)  \* Nothing to send (idle)
     \/ senderState = "waiting_credits"  \* Waiting for client ack
+    \/ bulkQueue > 0                    \* InvalidateOnSwitch always enabled
+
+\* 7. Timeframe-switch invariant: after InvalidateOnSwitch the bulk
+\*    queue is empty AND credits have been refreshed — no leak.
+\*    This is an action property on InvalidateOnSwitch.
+SwitchResetsBulkAndCredits ==
+    [InvalidateOnSwitch]_vars =>
+        (bulkQueue' = 0 /\ credits' = MaxCredits)
 
 \* 2. Realtime never starved: if realtime message exists, it will be sent.
 RealtimeProgress ==

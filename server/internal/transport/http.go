@@ -20,17 +20,21 @@ import (
 
 	"github.com/notbbg/notbbg/server/internal/auth"
 	"github.com/notbbg/notbbg/server/internal/bus"
+	"github.com/notbbg/notbbg/server/internal/datalake"
+	"github.com/notbbg/notbbg/server/internal/daterange"
 )
 
 // HTTPGateway provides REST endpoints for subscribing and receiving data.
 // Supports TLS and token-based authentication.
 type HTTPGateway struct {
-	bus         *bus.Bus
-	addr        string
-	authMgr     *auth.Manager
-	certDir     string
-	srv         *http.Server
-	searchFn func(query string, limit int) []byte // BM25 search function
+	bus             *bus.Bus
+	addr            string
+	authMgr         *auth.Manager
+	certDir         string
+	srv             *http.Server
+	searchFn        func(query string, limit int) []byte // BM25 search function
+	datalakeReader  *datalake.Reader // nil if datalake not configured
+	dateRange       *daterange.Handler // nil if datalake not configured
 }
 
 // NewHTTPGateway creates a new HTTP gateway.
@@ -68,6 +72,9 @@ func (g *HTTPGateway) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/snapshot", g.requireAuth(g.handleSnapshot))
 	mux.HandleFunc("/api/v1/news/search", g.requireAuth(g.handleNewsSearch))
 	mux.HandleFunc("/api/v1/agent/exec", g.requireAuth(g.handleAgentExec))
+	mux.HandleFunc("/api/v1/plugin/input", g.requireAuth(g.handlePluginInput))
+	mux.HandleFunc("/api/v1/history", g.requireAuth(g.handleHistory))
+	mux.HandleFunc("/api/v1/datarange", g.requireAuth(g.handleDataRange))
 
 	// Wrap with CORS middleware for Electron/browser access.
 	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,10 +211,7 @@ func (g *HTTPGateway) handleSSE(w http.ResponseWriter, r *http.Request) {
 		patternsParam = "ohlc.*.*,lob.*.*,news,alert,feed.status"
 	}
 
-	var patterns []string
-	for _, p := range splitPatterns(patternsParam) {
-		patterns = append(patterns, p)
-	}
+	patterns := splitPatterns(patternsParam)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -216,6 +220,18 @@ func (g *HTTPGateway) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	sub := g.bus.Subscribe(256, patterns...)
 	defer g.bus.Unsubscribe(sub)
+
+	// Send latest snapshot of key topics so late-joining clients get current state.
+	// This ensures plugin.registry, feed.status, etc. are received even if published before SSE connect.
+	for _, snapshot := range g.bus.LatestPerTopic(patterns...) {
+		payload, err := json.Marshal(snapshot.Payload)
+		if err != nil {
+			continue
+		}
+		event := fmt.Sprintf("data: {\"_topic\":\"%s\",\"_payload\":%s}\n\n", snapshot.Topic, payload)
+		_, _ = w.Write([]byte(event))
+	}
+	flusher.Flush()
 
 	ctx := r.Context()
 	for {
@@ -232,7 +248,7 @@ func (g *HTTPGateway) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			// No named event — puts everything in onmessage for EventSource compatibility.
 			event := fmt.Sprintf("data: {\"_topic\":\"%s\",\"_payload\":%s}\n\n", msg.Topic, payload)
-			w.Write([]byte(event))
+			_, _ = w.Write([]byte(event))
 			flusher.Flush()
 		}
 	}
@@ -259,14 +275,14 @@ func (g *HTTPGateway) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		for i, m := range msgs {
 			items[i] = m.Payload
 		}
-		json.NewEncoder(w).Encode(items)
+		_ = json.NewEncoder(w).Encode(items)
 		return
 	}
 
 	limitStr := r.URL.Query().Get("limit")
 	limit := 50
 	if limitStr != "" {
-		fmt.Sscanf(limitStr, "%d", &limit)
+		_, _ = fmt.Sscanf(limitStr, "%d", &limit)
 	}
 
 	sub := g.bus.Subscribe(limit, topic)
@@ -302,14 +318,14 @@ func (g *HTTPGateway) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	<-done
 
-	json.NewEncoder(w).Encode(items)
+	_ = json.NewEncoder(w).Encode(items)
 }
 
 // handleHealth returns server health status.
 func (g *HTTPGateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),
 	})
@@ -344,7 +360,7 @@ func (g *HTTPGateway) handlePair(w http.ResponseWriter, r *http.Request) {
 
 	// Try as session token first (already paired).
 	if _, err := g.authMgr.Validate(body.Token); err == nil {
-		json.NewEncoder(w).Encode(map[string]string{"session": body.Token})
+		_ = json.NewEncoder(w).Encode(map[string]string{"session": body.Token})
 		return
 	}
 
@@ -356,7 +372,7 @@ func (g *HTTPGateway) handlePair(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("phone paired via /api/v1/pair", "session", sessionID[:8]+"...")
-	json.NewEncoder(w).Encode(map[string]string{"session": sessionID})
+	_ = json.NewEncoder(w).Encode(map[string]string{"session": sessionID})
 }
 
 // handlePairQR generates a one-time pairing token and returns a QR code PNG.
@@ -374,7 +390,7 @@ func (g *HTTPGateway) handlePairQR(w http.ResponseWriter, r *http.Request) {
 	}
 	port := 9473
 	if portStr := r.URL.Query().Get("port"); portStr != "" {
-		fmt.Sscanf(portStr, "%d", &port)
+		_, _ = fmt.Sscanf(portStr, "%d", &port)
 	}
 
 	token, err := g.authMgr.GeneratePairingToken(
@@ -393,7 +409,7 @@ func (g *HTTPGateway) handlePairQR(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(png)
+	_, _ = w.Write(png)
 }
 
 // handlePairPhone generates a fresh phone session token.
@@ -416,7 +432,7 @@ func (g *HTTPGateway) handlePairPhone(w http.ResponseWriter, r *http.Request) {
 	g.authMgr.SeedSession(sessionID, "phone-app", auth.RightRead|auth.RightSubscribe)
 
 	// Write to file for manual access.
-	os.WriteFile("/tmp/notbbg-phone.token", []byte(sessionID), 0600)
+	_ = os.WriteFile("/tmp/notbbg-phone.token", []byte(sessionID), 0600)
 
 	// Build QR payload: URL + token for the phone to auto-pair.
 	httpURL := "http://" + g.addr
@@ -428,7 +444,7 @@ func (g *HTTPGateway) handlePairPhone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("generated fresh phone token", "session", sessionID[:8]+"...")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"token": sessionID,
 		"qr":    qrB64,
 	})
@@ -446,7 +462,7 @@ func (g *HTTPGateway) handleNewsSearch(w http.ResponseWriter, r *http.Request) {
 	limitStr := r.URL.Query().Get("limit")
 	limit := 100
 	if limitStr != "" {
-		fmt.Sscanf(limitStr, "%d", &limit)
+		_, _ = fmt.Sscanf(limitStr, "%d", &limit)
 	}
 
 	// Try BM25 search function if available.
@@ -454,7 +470,7 @@ func (g *HTTPGateway) handleNewsSearch(w http.ResponseWriter, r *http.Request) {
 		data := g.searchFn(query, limit)
 		if data != nil && string(data) != "null" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(data)
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -487,7 +503,7 @@ func (g *HTTPGateway) handleNewsSearch(w http.ResponseWriter, r *http.Request) {
 done:
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
+	_ = json.NewEncoder(w).Encode(results)
 }
 
 // handleAgentExec runs claude -p with the given prompt and returns the response.
@@ -516,7 +532,7 @@ func (g *HTTPGateway) handleAgentExec(w http.ResponseWriter, r *http.Request) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"response": string(output),
 			"error":    err.Error(),
 		})
@@ -524,7 +540,7 @@ func (g *HTTPGateway) handleAgentExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"response": string(output),
 	})
 }
@@ -546,4 +562,180 @@ func splitPatterns(s string) []string {
 		patterns = append(patterns, current)
 	}
 	return patterns
+}
+
+// handlePluginInput receives cell edit events from desktop/phone and publishes to bus.
+// POST /api/v1/plugin/input
+// body: {"topic": "plugin.pricer.screen", "screen_id": "PRICER", "address": {"row":2,"col":1}, "value": 70000}
+func (g *HTTPGateway) handlePluginInput(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Topic    string `json:"topic"`
+		ScreenID string `json:"screen_id"`
+		Address  struct {
+			Row uint32 `json:"row"`
+			Col uint32 `json:"col"`
+		} `json:"address"`
+		Value any `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Derive input topic from screen topic.
+	inputTopic := strings.TrimSuffix(req.Topic, ".screen") + ".input"
+	g.bus.Publish(bus.Message{
+		Topic: inputTopic,
+		Payload: map[string]any{
+			"screen_id": req.ScreenID,
+			"address":   map[string]any{"row": req.Address.Row, "col": req.Address.Col},
+			"value":     req.Value,
+		},
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+// SetDatalakeReader sets the datalake reader for historical queries.
+func (g *HTTPGateway) SetDatalakeReader(r *datalake.Reader) {
+	g.datalakeReader = r
+}
+
+// SetDateRangeHandler wires the streaming DataRange handler. The HTTP
+// endpoint at /api/v1/datarange mirrors the notbbg.v1.DataService
+// GetDataRange RPC shape — the same server logic, exposed over HTTP
+// so phone/desktop clients can consume it without gRPC tooling.
+func (g *HTTPGateway) SetDateRangeHandler(h *daterange.Handler) {
+	g.dateRange = h
+}
+
+// handleDataRange streams NDJSON chunks mirroring the proto
+// GetDataRangeResponse shape. Query params:
+//
+//	topic=ohlc.binance.BTCUSDT  (required)
+//	from=2026-04-01T00:00:00Z   (required, RFC3339)
+//	to=2026-04-02T00:00:00Z     (required, RFC3339)
+//	resolution=1m               (optional)
+//	correlation_id=<string>     (optional, echoed in each chunk)
+//	max_records=5000            (optional; 0 = server default)
+//
+// Response is one JSON object per line. The final line has "eof":true.
+// Client-side cancellation is supported by closing the connection.
+func (g *HTTPGateway) handleDataRange(w http.ResponseWriter, r *http.Request) {
+	if g.dateRange == nil {
+		http.Error(w, `{"error":"datarange not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	q := r.URL.Query()
+	fromStr := q.Get("from")
+	toStr := q.Get("to")
+
+	from, err := time.Parse(time.RFC3339, fromStr)
+	if err != nil {
+		http.Error(w, `{"error":"bad from (need RFC3339)"}`, http.StatusBadRequest)
+		return
+	}
+	to, err := time.Parse(time.RFC3339, toStr)
+	if err != nil {
+		http.Error(w, `{"error":"bad to (need RFC3339)"}`, http.StatusBadRequest)
+		return
+	}
+	maxRecords := 0
+	if s := q.Get("max_records"); s != "" {
+		_, _ = fmt.Sscanf(s, "%d", &maxRecords)
+	}
+	req := daterange.Request{
+		Topic:         q.Get("topic"),
+		From:          from,
+		To:            to,
+		Resolution:    q.Get("resolution"),
+		CorrelationID: q.Get("correlation_id"),
+		MaxRecords:    maxRecords,
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+
+	err = g.dateRange.Serve(r.Context(), req, func(c daterange.Chunk) error {
+		if err := enc.Encode(c); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	})
+	if err != nil {
+		// Stream already started — write a terminal error line. The
+		// client parses NDJSON so trailing malformed output on failure
+		// is not helpful; stick with the proto DataRangeError shape.
+		_ = enc.Encode(daterange.Error{
+			CorrelationID: req.CorrelationID,
+			Reason:        err.Error(),
+		})
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+}
+
+// handleHistory serves historical data from the datalake.
+// GET /api/v1/history?type=ohlc&exchange=binance&instrument=BTCUSDT&start=2026-04-01&end=2026-04-07&limit=1000
+func (g *HTTPGateway) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if g.datalakeReader == nil {
+		http.Error(w, `{"error":"datalake not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	q := r.URL.Query()
+	dataType := q.Get("type")
+	exchange := q.Get("exchange")
+	instrument := q.Get("instrument")
+	startStr := q.Get("start")
+	endStr := q.Get("end")
+	limitStr := q.Get("limit")
+
+	if dataType == "" {
+		http.Error(w, `{"error":"type parameter required (ohlc, trade, lob)"}`, http.StatusBadRequest)
+		return
+	}
+
+	start := time.Now().AddDate(0, 0, -1) // default: last 24h
+	end := time.Now()
+	if startStr != "" {
+		if t, err := time.Parse("2006-01-02", startStr); err == nil {
+			start = t
+		}
+	}
+	if endStr != "" {
+		if t, err := time.Parse("2006-01-02", endStr); err == nil {
+			end = t
+		}
+	}
+
+	limit := 1000
+	if limitStr != "" {
+		_, _ = fmt.Sscanf(limitStr, "%d", &limit)
+	}
+
+	records, err := g.datalakeReader.Query(dataType, exchange, instrument, start, end, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	_ = json.NewEncoder(w).Encode(records)
 }

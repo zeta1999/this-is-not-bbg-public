@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/notbbg/notbbg/tui/internal/client"
 	tuiconfig "github.com/notbbg/notbbg/tui/internal/config"
 	"github.com/notbbg/notbbg/tui/internal/views"
 )
@@ -22,6 +23,7 @@ import (
 const (
 	PanelOHLC    = "OHLC"
 	PanelLOB     = "LOB"
+	PanelTrades  = "TRADES"
 	PanelNews    = "NEWS"
 	PanelAlerts  = "ALERTS"
 	PanelMonitor = "MON"
@@ -29,7 +31,19 @@ const (
 	PanelAgent   = "AGENT"
 )
 
-var panelList = []string{PanelOHLC, PanelLOB, PanelNews, PanelAlerts, PanelMonitor, PanelLog, PanelAgent}
+var panelList = []string{PanelOHLC, PanelLOB, PanelTrades, PanelNews, PanelAlerts, PanelMonitor, PanelLog, PanelAgent}
+
+// panelHelp maps panel names to short description + key hints.
+var panelHelp = map[string][2]string{
+	PanelOHLC:    {"Candlestick charts with multi-timeframe OHLCV data", "[/]:pair  -/+:timeframe  H:history  h:help"},
+	PanelLOB:     {"Live limit order book depth (bids/asks)", "[/]:pair  h:help"},
+	PanelTrades:  {"Aggregated trade stats: VWAP, volume, quantiles", "[/]:pair  h:help"},
+	PanelNews:    {"Crypto news feed from RSS/GDELT sources", "j/k:nav  enter:read  /:search"},
+	PanelAlerts:  {"Price and volume alerts", ""},
+	PanelMonitor: {"Data feed health and connection status", ""},
+	PanelLog:     {"Server log output", ""},
+	PanelAgent:   {"AI agent terminal for analysis queries", "j/k:scroll  G:bottom  /:type  enter:send"},
+}
 
 // Bloomberg color palette.
 var (
@@ -69,36 +83,38 @@ const helpText = `
 
   NAVIGATION
     TAB / Shift+TAB     Next / previous panel
-    1-7                 Jump to panel: 1=OHLC 2=LOB 3=NEWS 4=ALERTS 5=MON 6=LOG 7=AGENT
+    Ctrl+1-9            Jump to panel by number
     / or :              Enter command mode
     h or ?              Show this help
     ESC                 Close overlay / cancel command
     q                   Quit
 
-  OHLC & LOB PANELS
+  CORE PANELS
+    OHLC       Candlestick charts, multi-timeframe        [/]:pair  -/+:tf
+    LOB        Limit order book depth (bids/asks)         [/]:pair
+    TRADES     Aggregated trade stats, VWAP, quantiles    [/]:pair
+    NEWS       Crypto news feed                           j/k:nav  enter:read  /:search
+    ALERTS     Price and volume alerts
+    MON        Feed health and connection status
+    LOG        Server log output
+    AGENT      AI agent terminal                          j/k:scroll  enter:send
+
+  PLUGIN PANELS (loaded from ~/.config/notbbg/plugins/)
+    Navigate input cells: j/k or arrows   Edit: Enter   Cancel: Esc
+    Enum inputs: up/down to cycle         Script: Enter opens editor (Ctrl+S saves)
+
+  OHLC & LOB & TRADES
     [ / ]  or  ← / →   Previous / next instrument
     - / +               Previous / next timeframe (OHLC only)
-
-  OHLC & LOB SEARCH
-    / then name         Search instruments (e.g. /SOL, /ETH, /yahoo, /nikkei)
-
-  NEWS PANEL
-    j / k  or  ↑ / ↓   Navigate headlines
-    Enter               Toggle article detail view
-    / then keyword      Filter by keyword, ticker, or source (e.g. /BTC, /CoinDesk)
-    ESC                 Clear filter or close article
+    H                   Load 24h history via DataRange (OHLC, non-blocking)
 
   COMMANDS (type / then command)
     BTC, ETH, SOL...    Jump to OHLC for that instrument
-    LOB                 Order book panel
-    NEWS                News feed panel
-    ALERTS              Alerts panel
-    MON                 Feed monitor panel
-    LOG                 Server log panel
-    ALERT SET <SYM> > <PRICE>    Create price alert (e.g. ALERT SET BTCUSDT > 100000)
+    LOB, TRADES, NEWS   Jump to panel
+    ALERT SET <SYM> > <PRICE>    Create price alert
     ALERT SET KEYWORD <word>     Create keyword alert
     PAIR                Show QR code for phone pairing
-    HELP                Show commands summary
+    HELP                Show this help
 
   Press ESC to close this help.
 `
@@ -121,14 +137,6 @@ type ohlcPayload struct {
 	Low        float64 `json:"Low"`
 	Close      float64 `json:"Close"`
 	Volume     float64 `json:"Volume"`
-}
-
-type tradePayload struct {
-	Instrument string  `json:"Instrument"`
-	Exchange   string  `json:"Exchange"`
-	Price      float64 `json:"Price"`
-	Quantity   float64 `json:"Quantity"`
-	Side       string  `json:"Side"`
 }
 
 type lobPayload struct {
@@ -155,10 +163,6 @@ type feedStatusPayload struct {
 
 // ---- Bubbletea messages ----
 
-type serverDataMsg struct {
-	wire wireMsg
-}
-
 type connectedMsg struct{}
 type disconnectedMsg struct{}
 
@@ -167,6 +171,12 @@ type disconnectedMsg struct{}
 type timeframeData struct {
 	Candles    []views.Candle
 	LastUpdate time.Time
+
+	// Loading state for progressive DataRange fetches (press H on
+	// OHLC). Loading flips true when a fetch starts; LoadSeq counts
+	// chunks received so the view can show "⟳ loading N".
+	Loading bool
+	LoadSeq int32
 }
 
 type instrumentData struct {
@@ -183,6 +193,7 @@ func instrumentKey(instrument, exchange string) string {
 
 // LogFunc is a callback to fetch server log lines. Set by main.
 var LogFunc func() []string
+
 
 // ---- Model ----
 
@@ -220,12 +231,48 @@ type Model struct {
 	feedStatuses []views.FeedStatusEntry
 
 	// Agent output.
-	agentLines    []string
 	agentScrollOff int // 0 = bottom (auto-scroll), >0 = lines from bottom
+
+	// Trade aggregates.
+	tradeData      map[string]*views.TradeViewData // key: exchange/instrument
+	tradeKeys      []string
+	tradeActiveIdx int
+
+	// GUI cache limits — populated from config at startup so hot paths
+	// don't have to reload config. Zero values clamped to defaults.
+	guiCache tuiconfig.GUICacheSettings
+
+	// Plugin screens (dynamic tabs from plugins).
+	pluginScreens  []views.PluginScreenData          // registered screens
+	pluginData     map[string][]views.PluginStyledLine // topic → latest lines
+	cellInput      textinput.Model                    // text input for editing plugin cells
+	cellEditing    bool                               // true when editing a cell
+	scriptEditor   *views.ScriptEditor                // nil when not editing a script
+	scriptScreenID string                             // which screen the editor belongs to
+	scriptRow      uint32                             // row of the script cell being edited
+	scriptCol      uint32                             // col of the script cell being edited
 
 	// Server connection channels.
 	dataCh   chan []byte  // raw frames from server
 	statusCh chan string  // connection status updates
+
+	// Progressive history loading (DataRange) — the fetch goroutine
+	// streams chunks here; the pollData loop drains and merges them
+	// into ohlcData. nil client means feature disabled (e.g. HTTP
+	// gateway off).
+	histCh     chan historyEvent
+	historyCli *client.DataRangeClient
+}
+
+// historyEvent is one DataRange chunk turned into app-level state.
+// key+tf identify which timeframeData to update; new candles are
+// already parsed so the main loop stays simple.
+type historyEvent struct {
+	key     string
+	tf      string
+	candles []views.Candle
+	eof     bool
+	err     error
 }
 
 // AgentFunc is a callback to fetch agent output lines. Set by main.
@@ -245,6 +292,7 @@ func New() Model {
 	cfg, _ := tuiconfig.Load("")
 	if cfg != nil {
 		activePanel = cfg.Panels.ActivePanel
+		// Clamp to core panel count; plugin panels may not exist at startup.
 		if activePanel < 0 || activePanel >= len(panelList) {
 			activePanel = 0
 		}
@@ -254,13 +302,22 @@ func New() Model {
 	ohlcData := make(map[string]*instrumentData)
 	var ohlcKeys []string
 	if cfg != nil {
-		for _, sym := range cfg.Watchlist {
-			ohlcKeys = append(ohlcKeys, sym)
-		}
+		ohlcKeys = append(ohlcKeys, cfg.Watchlist...)
 	}
+
+	ci := textinput.New()
+	ci.CharLimit = 64
+	ci.Width = 20
+
+	var guiCache tuiconfig.GUICacheSettings
+	if cfg != nil {
+		guiCache = cfg.GUI.Cache
+	}
+	guiCache = guiCache.WithDefaults()
 
 	return Model{
 		cmdInput:    ti,
+		cellInput:   ci,
 		activePanel: activePanel,
 		clock:       time.Now(),
 		statusMsg:   "Connecting...",
@@ -269,7 +326,22 @@ func New() Model {
 		ohlcData:    ohlcData,
 		ohlcKeys:    ohlcKeys,
 		lobData:     make(map[string]*views.LOBData),
+		tradeData:   make(map[string]*views.TradeViewData),
+		pluginData:  make(map[string][]views.PluginStyledLine),
+		guiCache:    guiCache,
+		histCh:      make(chan historyEvent, 64),
+		historyCli:  client.NewDataRangeClient(""),
 	}
+}
+
+// allPanels returns the core panels plus any registered plugin screen IDs.
+func (m Model) allPanels() []string {
+	panels := make([]string, len(panelList))
+	copy(panels, panelList)
+	for _, s := range m.pluginScreens {
+		panels = append(panels, s.ID)
+	}
+	return panels
 }
 
 // saveLayout persists the current panel to config.
@@ -279,7 +351,7 @@ func (m *Model) saveLayout() {
 		cfg = &tuiconfig.UserConfig{}
 	}
 	cfg.Panels.ActivePanel = m.activePanel
-	tuiconfig.Save("", cfg)
+	_ = tuiconfig.Save("", cfg)
 }
 
 // DataChan returns the channel to push raw server frames into the model.
@@ -367,9 +439,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	dataDone:
 		if drained > 0 {
 			m.connected = true
-			m.msgCount += drained
-			m.statusMsg = fmt.Sprintf("Live | %d msgs", m.msgCount)
+			if m.msgCount < 50000 {
+				m.msgCount += drained
+			}
+			if m.msgCount >= 50000 {
+				m.statusMsg = fmt.Sprintf("Live | %d+ msgs", 50000)
+			} else {
+				m.statusMsg = fmt.Sprintf("Live | %d msgs", m.msgCount)
+			}
 		}
+
+		// Drain progressive history chunks (non-blocking). Runs on the
+		// same 16ms tick so the UI stays responsive while DataRange
+		// streams.
+		for {
+			select {
+			case ev := <-m.histCh:
+				m.applyHistoryEvent(ev)
+			default:
+				goto histDone
+			}
+		}
+	histDone:
+
 		return m, pollDataCmd()
 
 	case connectedMsg:
@@ -443,8 +535,12 @@ func (m *Model) handleServerData(wire wireMsg) {
 		tfd.LastUpdate = time.Now()
 		candle := views.Candle{Open: p.Open, High: p.High, Low: p.Low, Close: p.Close, Volume: p.Volume}
 		tfd.Candles = append(tfd.Candles, candle)
-		if len(tfd.Candles) > 200 {
-			tfd.Candles = tfd.Candles[len(tfd.Candles)-200:]
+		cap := m.guiCache.OHLCRowsPerInstrument
+		if cap <= 0 {
+			cap = tuiconfig.DefaultOHLCRowsPerInstrument
+		}
+		if len(tfd.Candles) > cap {
+			tfd.Candles = tfd.Candles[len(tfd.Candles)-cap:]
 		}
 
 	case strings.HasPrefix(topic, "lob."):
@@ -528,6 +624,71 @@ func (m *Model) handleServerData(wire wireMsg) {
 			m.feedStatuses = append(m.feedStatuses, entry)
 		}
 
+	case strings.HasPrefix(topic, "trade.agg."):
+		var agg struct {
+			Instrument string  `json:"Instrument"`
+			Exchange   string  `json:"Exchange"`
+			Count      int64   `json:"Count"`
+			Volume     float64 `json:"Volume"`
+			BuyVolume  float64 `json:"BuyVolume"`
+			SellVolume float64 `json:"SellVolume"`
+			VWAP       float64 `json:"VWAP"`
+			Open       float64 `json:"Open"`
+			High       float64 `json:"High"`
+			Low        float64 `json:"Low"`
+			Close      float64 `json:"Close"`
+			Turnover   float64 `json:"Turnover"`
+			P25        float64 `json:"P25"`
+			P50        float64 `json:"P50"`
+			P75        float64 `json:"P75"`
+		}
+		if json.Unmarshal(wire.Payload, &agg) != nil {
+			return
+		}
+		key := agg.Exchange + "/" + agg.Instrument
+		td, ok := m.tradeData[key]
+		if !ok {
+			td = &views.TradeViewData{}
+			m.tradeData[key] = td
+			m.tradeKeys = append(m.tradeKeys, key)
+		}
+		td.Agg = &views.TradeAggData{
+			Instrument: agg.Instrument, Exchange: agg.Exchange,
+			Count: agg.Count, Volume: agg.Volume,
+			BuyVolume: agg.BuyVolume, SellVolume: agg.SellVolume,
+			VWAP: agg.VWAP, Open: agg.Open, High: agg.High, Low: agg.Low, Close: agg.Close,
+			Turnover: agg.Turnover, P25: agg.P25, P50: agg.P50, P75: agg.P75,
+		}
+
+	case strings.HasPrefix(topic, "trade.snap."):
+		var snap struct {
+			Instrument string `json:"Instrument"`
+			Exchange   string `json:"Exchange"`
+			Trades     []struct {
+				Price     float64 `json:"Price"`
+				Quantity  float64 `json:"Quantity"`
+				Side      string  `json:"Side"`
+				Timestamp string  `json:"Timestamp"`
+			} `json:"Trades"`
+		}
+		if json.Unmarshal(wire.Payload, &snap) != nil {
+			return
+		}
+		key := snap.Exchange + "/" + snap.Instrument
+		td, ok := m.tradeData[key]
+		if !ok {
+			td = &views.TradeViewData{}
+			m.tradeData[key] = td
+			m.tradeKeys = append(m.tradeKeys, key)
+		}
+		td.Trades = nil
+		for _, t := range snap.Trades {
+			ts, _ := time.Parse(time.RFC3339Nano, t.Timestamp)
+			td.Trades = append(td.Trades, views.TradeSnapEntry{
+				Price: t.Price, Quantity: t.Quantity, Side: t.Side, Timestamp: ts,
+			})
+		}
+
 	case topic == "alert":
 		var raw map[string]any
 		if json.Unmarshal(wire.Payload, &raw) != nil {
@@ -541,10 +702,73 @@ func (m *Model) handleServerData(wire wireMsg) {
 			CreatedAt:  time.Now(),
 		}
 		m.alertItems = append([]views.AlertEntry{entry}, m.alertItems...)
+
+	case topic == "plugin.registry":
+		// Parse plugin screen registry.
+		var reg struct {
+			Screens []struct {
+				ID     string `json:"id"`
+				Plugin string `json:"plugin"`
+				Label  string `json:"label"`
+				Icon   string `json:"icon"`
+				Topic  string `json:"topic"`
+			} `json:"screens"`
+		}
+		if json.Unmarshal(wire.Payload, &reg) != nil {
+			return
+		}
+		m.pluginScreens = nil
+		for _, s := range reg.Screens {
+			m.pluginScreens = append(m.pluginScreens, views.PluginScreenData{
+				ID:        s.ID,
+				Label:     s.Label,
+				Topic:     s.Topic,
+				CursorRow: -1,
+				CursorCol: -1,
+			})
+		}
+
+	case strings.HasPrefix(topic, "plugin.") && strings.HasSuffix(topic, ".screen"):
+		// Try cell grid update first (version=cellgrid/v1).
+		var gridUpdate struct {
+			ScreenID    string             `json:"screen_id"`
+			Version     string             `json:"version"`
+			Cells       []views.PluginCell `json:"cells"`
+			FullReplace bool               `json:"full_replace"`
+		}
+		if json.Unmarshal(wire.Payload, &gridUpdate) == nil && gridUpdate.Version == "cellgrid/v1" {
+			for i := range m.pluginScreens {
+				if m.pluginScreens[i].Topic == topic {
+					m.pluginScreens[i].CellGrid = true
+					if gridUpdate.FullReplace {
+						m.pluginScreens[i].Cells = gridUpdate.Cells
+					} else {
+						m.pluginScreens[i].Cells = mergeCells(m.pluginScreens[i].Cells, gridUpdate.Cells)
+					}
+					break
+				}
+			}
+			return
+		}
+
+		// Legacy styled-line update.
+		var update struct {
+			ScreenID string                   `json:"screen_id"`
+			Lines    []views.PluginStyledLine `json:"lines"`
+		}
+		if json.Unmarshal(wire.Payload, &update) != nil {
+			return
+		}
+		m.pluginData[topic] = update.Lines
 	}
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Script editor overlay intercepts all keys.
+	if m.scriptEditor != nil {
+		return m.handleScriptEditorKey(msg)
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if !m.cmdMode {
@@ -552,11 +776,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case "tab":
-		m.activePanel = (m.activePanel + 1) % len(panelList)
+		m.activePanel = (m.activePanel + 1) % len(m.allPanels())
 		m.qrOverlay = ""
 		return m, nil
 	case "shift+tab":
-		m.activePanel = (m.activePanel - 1 + len(panelList)) % len(panelList)
+		m.activePanel = (m.activePanel - 1 + len(m.allPanels())) % len(m.allPanels())
 		return m, nil
 	case "/", ":":
 		if !m.cmdMode {
@@ -606,9 +830,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if k := msg.String(); len(k) == 1 && k[0] >= '1' && k[0] <= '7' {
-			m.activePanel = int(k[0]-'1') % len(panelList)
-			return m, nil
+		// ctrl+1 through ctrl+9 jump to panels (number keys reserved for cell editing).
+		if strings.HasPrefix(msg.String(), "ctrl+") && len(msg.String()) == 6 {
+			ch := msg.String()[5]
+			if ch >= '1' && ch <= '9' {
+				idx := int(ch - '1')
+				if idx < len(m.allPanels()) {
+					m.activePanel = idx
+				}
+				return m, nil
+			}
 		}
 
 		// Agent terminal scrolling.
@@ -689,6 +920,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if len(m.lobKeys) > 0 {
 					m.lobActiveIdx = (m.lobActiveIdx - 1 + len(m.lobKeys)) % len(m.lobKeys)
 				}
+			case 2:
+				if len(m.tradeKeys) > 0 {
+					m.tradeActiveIdx = (m.tradeActiveIdx - 1 + len(m.tradeKeys)) % len(m.tradeKeys)
+				}
 			}
 			return m, nil
 		case "]", "right":
@@ -700,6 +935,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 1:
 				if len(m.lobKeys) > 0 {
 					m.lobActiveIdx = (m.lobActiveIdx + 1) % len(m.lobKeys)
+				}
+			case 2:
+				if len(m.tradeKeys) > 0 {
+					m.tradeActiveIdx = (m.tradeActiveIdx + 1) % len(m.tradeKeys)
 				}
 			}
 			return m, nil
@@ -713,6 +952,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cycleTF(1)
 			}
 			return m, nil
+		case "H":
+			// Progressive history load over /api/v1/datarange (async).
+			// The UI stays fully responsive while chunks stream in.
+			if m.activePanel == 0 {
+				m.startHistoryLoad(24 * time.Hour)
+				m.statusMsg = "Loading history (24h)…"
+			}
+			return m, nil
+		}
+	}
+
+	// Plugin cell navigation and editing.
+	pluginIdx := m.activePanel - len(panelList)
+	if pluginIdx >= 0 && pluginIdx < len(m.pluginScreens) {
+		screen := &m.pluginScreens[pluginIdx]
+		if screen.CellGrid {
+			return m.handlePluginCellKey(screen, msg)
 		}
 	}
 
@@ -722,6 +978,132 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	return m, nil
+}
+
+func (m Model) handlePluginCellKey(screen *views.PluginScreenData, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// If editing, delegate to cell input or handle enum cycling.
+	if m.cellEditing {
+		cell := screen.CellAt(screen.CursorRow, screen.CursorCol)
+		if cell != nil && cell.Type == "input_enum" {
+			switch msg.String() {
+			case "up", "k":
+				if screen.EnumIdx > 0 {
+					screen.EnumIdx--
+					screen.EditValue = cell.Options[screen.EnumIdx].Label
+				}
+				return m, nil
+			case "down", "j":
+				if screen.EnumIdx < len(cell.Options)-1 {
+					screen.EnumIdx++
+					screen.EditValue = cell.Options[screen.EnumIdx].Label
+				}
+				return m, nil
+			case "enter":
+				m.cellEditing = false
+				screen.Editing = false
+				val := cell.Options[screen.EnumIdx].Value
+				m.sendPluginInput(screen, uint32(screen.CursorRow), uint32(screen.CursorCol), val)
+				return m, nil
+			case "esc":
+				m.cellEditing = false
+				screen.Editing = false
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Non-enum: text input mode.
+		switch msg.String() {
+		case "enter":
+			m.cellEditing = false
+			screen.Editing = false
+			m.cellInput.Blur()
+			val := m.cellInput.Value()
+			m.sendPluginInput(screen, uint32(screen.CursorRow), uint32(screen.CursorCol), val)
+			return m, nil
+		case "esc":
+			m.cellEditing = false
+			screen.Editing = false
+			m.cellInput.Blur()
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.cellInput, cmd = m.cellInput.Update(msg)
+			screen.EditValue = m.cellInput.Value()
+			return m, cmd
+		}
+	}
+
+	// Not editing — navigation mode.
+	if screen.CursorRow < 0 {
+		screen.SelectFirstInput()
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		r, c, ok := screen.NextInputCell(-1)
+		if ok {
+			screen.CursorRow, screen.CursorCol = r, c
+		}
+		return m, nil
+	case "down", "j", "tab":
+		r, c, ok := screen.NextInputCell(1)
+		if ok {
+			screen.CursorRow, screen.CursorCol = r, c
+		}
+		return m, nil
+	case "shift+tab":
+		r, c, ok := screen.NextInputCell(-1)
+		if ok {
+			screen.CursorRow, screen.CursorCol = r, c
+		}
+		return m, nil
+	case "enter":
+		cell := screen.CellAt(screen.CursorRow, screen.CursorCol)
+		if cell != nil && views.IsInputCell(cell) {
+			if cell.Type == "input_script" {
+				// Open full-screen script editor.
+				val, _ := cell.Value.(string)
+				lang := "aria-strategy"
+				if cell.Label != "" && strings.Contains(strings.ToLower(cell.Label), "payoff") {
+					lang = "aria-payoff"
+				}
+				m.scriptEditor = views.NewScriptEditor(cell.Label, lang, val)
+				m.scriptScreenID = screen.ID
+				m.scriptRow = uint32(screen.CursorRow)
+				m.scriptCol = uint32(screen.CursorCol)
+				return m, nil
+			}
+			m.cellEditing = true
+			screen.Editing = true
+			if cell.Type == "input_enum" {
+				screen.EnumIdx = 0
+				curVal := fmt.Sprintf("%v", cell.Value)
+				for i, opt := range cell.Options {
+					if opt.Value == curVal {
+						screen.EnumIdx = i
+						break
+					}
+				}
+				screen.EditValue = cell.Options[screen.EnumIdx].Label
+			} else {
+				curVal := fmt.Sprintf("%v", cell.Value)
+				m.cellInput.SetValue(curVal)
+				m.cellInput.Focus()
+				screen.EditValue = curVal
+				return m, textinput.Blink
+			}
+		}
+		return m, nil
+	}
+
+	if m.cmdMode {
+		var cmd tea.Cmd
+		m.cmdInput, cmd = m.cmdInput.Update(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 
@@ -935,7 +1317,7 @@ func (m *Model) processAlertSet(args string) {
 		instrument = parts[0]
 		op := parts[1]
 		val := parts[2]
-		fmt.Sscanf(val, "%f", &threshold)
+		_, _ = fmt.Sscanf(val, "%f", &threshold)
 		switch op {
 		case ">":
 			alertType = 1 // PriceAbove
@@ -979,27 +1361,65 @@ func (m Model) View() string {
 		connColor = colorGreen
 	}
 
-	var tabParts []string
-	for i, p := range panelList {
-		if i == m.activePanel {
-			tabParts = append(tabParts, activeTabStyle.Render(p))
-		} else {
-			tabParts = append(tabParts, inactiveTabStyle.Render(p))
-		}
-	}
-	tabs := strings.Join(tabParts, "  ")
+	allPanels := m.allPanels()
 
+	// Scrollable tab bar: fit as many tabs as terminal width allows.
 	clockStr := m.clock.Format("15:04:05")
 	connStr := lipgloss.NewStyle().Foreground(connColor).Render(connStatus)
+	rightPart := fmt.Sprintf("%s  %s ", connStr, clockStr)
+	rightW := lipgloss.Width(rightPart)
+	availW := m.width - 10 - rightW // " NOTBBG  " prefix + right side
+
+	// Determine visible tab range centered on active panel.
+	var tabParts []string
+	tabStart := 0
+	for {
+		// Try rendering from tabStart.
+		tabParts = nil
+		totalW := 0
+		for i := tabStart; i < len(allPanels); i++ {
+			p := allPanels[i]
+			var rendered string
+			if i == m.activePanel {
+				rendered = activeTabStyle.Render(p)
+			} else {
+				rendered = inactiveTabStyle.Render(p)
+			}
+			w := lipgloss.Width(rendered) + 2 // separator
+			if totalW+w > availW && len(tabParts) > 0 {
+				break
+			}
+			tabParts = append(tabParts, rendered)
+			totalW += w
+		}
+		// Ensure active panel is visible.
+		if m.activePanel >= tabStart && m.activePanel < tabStart+len(tabParts) {
+			break
+		}
+		tabStart++
+		if tabStart >= len(allPanels) {
+			break
+		}
+	}
+
+	tabOverflow := lipgloss.NewStyle().Foreground(colorDim)
+	prefix := ""
+	if tabStart > 0 {
+		prefix = tabOverflow.Render("◀ ")
+	}
+	suffix := ""
+	if tabStart+len(tabParts) < len(allPanels) {
+		suffix = tabOverflow.Render(" ▸")
+	}
+	tabs := prefix + strings.Join(tabParts, "  ") + suffix
 
 	topLeft := fmt.Sprintf(" NOTBBG  %s", tabs)
-	topRight := fmt.Sprintf("%s  %s ", connStr, clockStr)
-	topPad := m.width - lipgloss.Width(topLeft) - lipgloss.Width(topRight)
+	topPad := m.width - lipgloss.Width(topLeft) - lipgloss.Width(rightPart)
 	if topPad < 1 {
 		topPad = 1
 	}
 	topBar := topBarStyle.Width(m.width).Render(
-		topLeft + strings.Repeat(" ", topPad) + topRight,
+		topLeft + strings.Repeat(" ", topPad) + rightPart,
 	)
 
 	topBarHeight := lipgloss.Height(topBar)
@@ -1008,7 +1428,9 @@ func (m Model) View() string {
 		mainHeight = 1
 	}
 	var mainContent string
-	if m.qrOverlay != "" {
+	if m.scriptEditor != nil {
+		mainContent = views.RenderScriptEditor(m.scriptEditor, m.width, mainHeight)
+	} else if m.qrOverlay != "" {
 		mainContent = lipgloss.NewStyle().Foreground(colorAmber).Render(m.qrOverlay)
 	} else {
 		mainContent = m.renderPanel(mainHeight)
@@ -1020,20 +1442,19 @@ func (m Model) View() string {
 		bottomContent = " > " + m.cmdInput.View()
 	} else {
 		panelHint := ""
-		switch m.activePanel {
-		case 0:
-			panelHint = "  [/]:pair  -/+:timeframe"
-		case 1:
-			panelHint = "  [/]:pair"
-		case 2:
-			panelHint = "  j/k:nav  enter:read  /:search"
-			if m.newsFilter != "" {
-				panelHint += "  esc:clear"
+		if m.activePanel < len(allPanels) {
+			panelName := allPanels[m.activePanel]
+			if h, ok := panelHelp[panelName]; ok && h[1] != "" {
+				panelHint = "  " + h[1]
 			}
-		case 6:
-			panelHint = "  j/k:scroll  G:bottom  /:type  !:shell  enter:send"
+			// Plugin screens get cell-editing hints.
+			pluginIdx := m.activePanel - len(panelList)
+			if pluginIdx >= 0 && pluginIdx < len(m.pluginScreens) && m.pluginScreens[pluginIdx].CellGrid {
+				panelHint = "  j/k:nav  enter:edit  esc:cancel"
+			}
 		}
-		bottomContent = fmt.Sprintf(" TAB:switch  /:cmd  1-7:panels%s  q:quit  |  %s", panelHint, m.statusMsg)
+		panelCount := len(allPanels)
+		bottomContent = fmt.Sprintf(" TAB:switch  /:cmd  ^1-^%d:panels%s  q:quit  |  %s", panelCount, panelHint, m.statusMsg)
 	}
 	bottomBar := bottomBarStyle.Width(m.width).Render(bottomContent)
 
@@ -1041,7 +1462,11 @@ func (m Model) View() string {
 }
 
 func (m Model) renderPanel(height int) string {
-	panel := panelList[m.activePanel]
+	allPanels := m.allPanels()
+	if m.activePanel >= len(allPanels) {
+		m.activePanel = 0
+	}
+	panel := allPanels[m.activePanel]
 
 	switch panel {
 	case PanelOHLC:
@@ -1068,6 +1493,7 @@ func (m Model) renderPanel(height int) string {
 		var candles []views.Candle
 		instrument, exchange, tf := "—", "", ""
 		var availableTFs []string
+		loadingHint := ""
 		if m.ohlcActiveIdx < len(m.ohlcKeys) {
 			key := m.ohlcKeys[m.ohlcActiveIdx]
 			if d, ok := m.ohlcData[key]; ok {
@@ -1077,6 +1503,9 @@ func (m Model) renderPanel(height int) string {
 				// Get candles for active timeframe.
 				if tfd, ok := d.Timeframes[d.ActiveTF]; ok {
 					candles = tfd.Candles
+					if tfd.Loading {
+						loadingHint = fmt.Sprintf("loading (%d)", tfd.LoadSeq)
+					}
 				}
 				// Collect available timeframes.
 				for k := range d.Timeframes {
@@ -1086,7 +1515,7 @@ func (m Model) renderPanel(height int) string {
 				instrument = key
 			}
 		}
-		return views.RenderOHLCWithSidebar(candles, m.width, height, instrument, exchange, tf, sidebar, availableTFs)
+		return views.RenderOHLCWithSidebar(candles, m.width, height, instrument, exchange, tf, sidebar, availableTFs, loadingHint)
 
 	case PanelLOB:
 		var sidebar []views.LOBSidebarEntry
@@ -1107,6 +1536,9 @@ func (m Model) renderPanel(height int) string {
 			activeData = m.lobData[m.lobKeys[m.lobActiveIdx]]
 		}
 		return views.RenderLOB(activeData, m.width, height, sidebar)
+
+	case PanelTrades:
+		return views.RenderTrades(m.tradeData, m.tradeKeys, m.tradeActiveIdx, m.width, height)
 
 	case PanelNews:
 		return views.RenderNews(m.newsItems, m.newsFilter, m.width, height, m.newsSelectedIdx, m.newsDetail)
@@ -1130,7 +1562,175 @@ func (m Model) renderPanel(height int) string {
 			lines = AgentFunc()
 		}
 		return views.RenderAgent(lines, m.width, height, m.agentScrollOff)
+
+	default:
+		// Check if this is a plugin screen.
+		for _, ps := range m.pluginScreens {
+			if ps.ID == panel {
+				screen := ps
+				if lines, ok := m.pluginData[ps.Topic]; ok {
+					screen.Lines = lines
+				}
+				return views.RenderPluginScreen(screen, m.width, height)
+			}
+		}
 	}
 
 	return ""
+}
+
+// mergeCells applies incremental cell updates to an existing grid.
+// Updated cells replace existing cells at the same address; new cells are appended.
+func mergeCells(existing, updates []views.PluginCell) []views.PluginCell {
+	// Index existing cells by address for O(1) lookup.
+	idx := make(map[uint64]int, len(existing))
+	for i, c := range existing {
+		key := uint64(c.Address.Row)<<32 | uint64(c.Address.Col)
+		idx[key] = i
+	}
+	for _, c := range updates {
+		key := uint64(c.Address.Row)<<32 | uint64(c.Address.Col)
+		if i, ok := idx[key]; ok {
+			existing[i] = c
+		} else {
+			idx[key] = len(existing)
+			existing = append(existing, c)
+		}
+	}
+	return existing
+}
+
+// sendPluginInput sends a cell edit event to the server for routing to the plugin.
+func (m *Model) sendPluginInput(screen *views.PluginScreenData, row, col uint32, rawValue string) {
+	if SendFrame == nil {
+		m.statusMsg = "Not connected"
+		return
+	}
+
+	// Parse value based on cell type.
+	cell := screen.CellAt(int(row), int(col))
+	var value any = rawValue
+	if cell != nil {
+		switch cell.Type {
+		case "input_decimal":
+			var f float64
+			_, _ = fmt.Sscanf(rawValue, "%f", &f)
+			value = f
+		case "input_integer":
+			var n int64
+			_, _ = fmt.Sscanf(rawValue, "%d", &n)
+			value = n
+		}
+	}
+
+	evt := map[string]any{
+		"screen_id": screen.ID,
+		"address":   map[string]any{"row": row, "col": col},
+		"value":     value,
+	}
+	payload, _ := json.Marshal(evt)
+	msg, _ := json.Marshal(map[string]any{
+		"type":    "plugin_input",
+		"topic":   screen.Topic,
+		"payload": json.RawMessage(payload),
+	})
+	SendFrame(msg)
+	m.statusMsg = fmt.Sprintf("Sent: %s R%dC%d = %v", screen.ID, row, col, value)
+}
+
+// handleScriptEditorKey handles keys when the script editor overlay is open.
+func (m Model) handleScriptEditorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	e := m.scriptEditor
+
+	// File picker mode.
+	if e.FilePicker {
+		switch msg.String() {
+		case "up", "k":
+			if e.FilePickerIdx > 0 {
+				e.FilePickerIdx--
+			}
+		case "down", "j":
+			if e.FilePickerIdx < len(e.FileList)-1 {
+				e.FilePickerIdx++
+			}
+		case "enter":
+			if f := e.SelectedFile(); f != "" {
+				path := e.ScriptsDir + "/" + f
+				data, err := os.ReadFile(path)
+				if err == nil {
+					e.Lines = strings.Split(string(data), "\n")
+					if len(e.Lines) == 0 {
+						e.Lines = []string{""}
+					}
+					e.CursorR = 0
+					e.CursorC = 0
+					e.ScrollOff = 0
+					e.Title = f
+					m.statusMsg = fmt.Sprintf("Loaded: %s", f)
+				}
+			}
+			e.CloseFilePicker()
+		case "esc":
+			e.CloseFilePicker()
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "ctrl+s":
+		// Save and close: send script text to plugin.
+		text := e.Text()
+		for i := range m.pluginScreens {
+			if m.pluginScreens[i].ID == m.scriptScreenID {
+				m.sendPluginInput(&m.pluginScreens[i], m.scriptRow, m.scriptCol, text)
+				break
+			}
+		}
+		m.scriptEditor = nil
+		m.statusMsg = "Script saved"
+		return m, nil
+	case "ctrl+o":
+		// Open file picker — list .aria and .strat files from scripts dir.
+		scriptsDir := os.Getenv("HOME") + "/.config/this-is-not-bbg/scripts"
+		entries, _ := os.ReadDir(scriptsDir)
+		var files []string
+		for _, entry := range entries {
+			if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".aria") || strings.HasSuffix(entry.Name(), ".strat")) {
+				files = append(files, entry.Name())
+			}
+		}
+		e.OpenFilePicker(files, scriptsDir)
+		return m, nil
+	case "esc":
+		m.scriptEditor = nil
+		m.statusMsg = "Script editor cancelled"
+		return m, nil
+	case "up":
+		e.Up()
+	case "down":
+		e.Down()
+	case "left":
+		e.Left()
+	case "right":
+		e.Right()
+	case "home":
+		e.Home()
+	case "end":
+		e.End()
+	case "enter":
+		e.Enter()
+	case "backspace":
+		e.Backspace()
+	case "delete":
+		e.Delete()
+	case "tab":
+		e.InsertTab()
+	default:
+		if msg.Type == tea.KeyRunes {
+			for _, r := range msg.Runes {
+				e.InsertChar(r)
+			}
+		}
+	}
+	return m, nil
 }

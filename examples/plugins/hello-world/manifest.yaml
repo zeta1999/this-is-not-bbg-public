@@ -1,0 +1,11 @@
+name: hello-world
+command: ./hello-world
+args: []
+input_topics:
+  - "ohlc.binance.*"
+output_topics:
+  - "plugin.hello-world.screen"
+screens:
+  - id: "HELLO"
+    label: "Hello World"
+    icon: "flash-outline"

@@ -20,6 +20,7 @@ import (
 	"github.com/notbbg/notbbg/server/internal/alerts"
 	cronpkg "github.com/notbbg/notbbg/server/internal/cron"
 	"github.com/notbbg/notbbg/server/internal/datalake"
+	"github.com/notbbg/notbbg/server/internal/daterange"
 	"github.com/notbbg/notbbg/server/internal/auth"
 	"github.com/notbbg/notbbg/server/internal/bus"
 	"github.com/notbbg/notbbg/server/internal/cache"
@@ -27,9 +28,13 @@ import (
 	"github.com/notbbg/notbbg/server/internal/feeds"
 	"github.com/notbbg/notbbg/server/internal/feeds/ccxt"
 	"github.com/notbbg/notbbg/server/internal/feeds/dex"
+	"github.com/notbbg/notbbg/server/internal/feeds/ravel"
 	"github.com/notbbg/notbbg/server/internal/feeds/rss"
+	"github.com/notbbg/notbbg/server/internal/feeds/sibelius"
+	"github.com/notbbg/notbbg/server/internal/feeds/tsbase_files"
 	"github.com/notbbg/notbbg/server/internal/feeds/world"
 	"github.com/notbbg/notbbg/server/internal/monitor"
+	"github.com/notbbg/notbbg/server/internal/plugins"
 	"github.com/notbbg/notbbg/server/internal/transport"
 )
 
@@ -143,7 +148,7 @@ func main() {
 				sizeMB := store.DBSizeBytes() / (1024 * 1024)
 				if maxCacheSizeBytes > 0 && store.DBSizeBytes() > maxCacheSizeBytes {
 					slog.Warn("cache size exceeds limit, evicting aggressively", "size_mb", sizeMB, "max_mb", cfg.Cache.MaxSizeMB)
-					store.Evict()
+					_ = store.Evict()
 				}
 				slog.Debug("cache size", "size_mb", sizeMB)
 			}
@@ -173,6 +178,16 @@ func main() {
 		slog.Warn("failed to write phone token", "error", err)
 	} else {
 		slog.Info("phone session token written to /tmp/notbbg-phone.token")
+	}
+
+	// TUI session token — the TUI uses the unix socket for live
+	// subscribe, but now also needs HTTP for /api/v1/datarange.
+	tuiSessionID, _ := auth.GenerateTokenID()
+	authMgr.SeedSession(tuiSessionID, "tui-app", auth.RightRead|auth.RightSubscribe)
+	if err := os.WriteFile("/tmp/notbbg-tui.token", []byte(tuiSessionID), 0600); err != nil {
+		slog.Warn("failed to write tui token", "error", err)
+	} else {
+		slog.Info("tui session token written to /tmp/notbbg-tui.token")
 	}
 
 	// Support NOTBBG_SECRET_FILE: read shared secret from a file (e.g. tmpfs-mounted).
@@ -226,7 +241,7 @@ func main() {
 				msgBus, exCfg.Symbols, exCfg.FeedTypes,
 				exCfg.WSEndpoint, exCfg.RESTBase, exCfg.RateLimit,
 			)
-			feedMgr.Register(adapter)
+			_ = feedMgr.Register(adapter)
 
 			// Historical backfill.
 			if exCfg.BackfillDays > 0 {
@@ -239,22 +254,22 @@ func main() {
 				msgBus, exCfg.Symbols, exCfg.FeedTypes,
 				exCfg.WSEndpoint, exCfg.RESTBase, exCfg.RateLimit,
 			)
-			feedMgr.Register(adapter)
+			_ = feedMgr.Register(adapter)
 		case "kraken":
 			adapter := ccxt.NewKrakenAdapter(
 				msgBus, exCfg.Symbols, exCfg.FeedTypes,
 				exCfg.WSEndpoint, exCfg.RESTBase, exCfg.RateLimit,
 			)
-			feedMgr.Register(adapter)
+			_ = feedMgr.Register(adapter)
 		case "okx":
 			adapter := ccxt.NewOKXAdapter(msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.WSEndpoint)
-			feedMgr.Register(adapter)
+			_ = feedMgr.Register(adapter)
 		case "bybit":
 			adapter := ccxt.NewBybitAdapter(msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.WSEndpoint)
-			feedMgr.Register(adapter)
+			_ = feedMgr.Register(adapter)
 		case "bitget":
 			adapter := ccxt.NewBitgetAdapter(msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.WSEndpoint)
-			feedMgr.Register(adapter)
+			_ = feedMgr.Register(adapter)
 		default:
 			slog.Warn("unknown exchange adapter, skipping", "name", exCfg.Name)
 		}
@@ -262,64 +277,105 @@ func main() {
 
 	// World feed adapters.
 	if cfg.Feeds.World.CoinGecko.Enabled {
-		feedMgr.Register(world.NewCoinGeckoAdapter(msgBus, cfg.Feeds.World.CoinGecko.PollInterval))
+		_ = feedMgr.Register(world.NewCoinGeckoAdapter(msgBus, cfg.Feeds.World.CoinGecko.PollInterval))
 	}
 	if cfg.Feeds.World.AlternativeMe.Enabled {
-		feedMgr.Register(world.NewFearGreedAdapter(msgBus, cfg.Feeds.World.AlternativeMe.PollInterval))
+		_ = feedMgr.Register(world.NewFearGreedAdapter(msgBus, cfg.Feeds.World.AlternativeMe.PollInterval))
 	}
 	if cfg.Feeds.World.MempoolSpace.Enabled {
-		feedMgr.Register(world.NewMempoolAdapter(msgBus, cfg.Feeds.World.MempoolSpace.PollInterval))
+		_ = feedMgr.Register(world.NewMempoolAdapter(msgBus, cfg.Feeds.World.MempoolSpace.PollInterval))
 	}
 	if cfg.Feeds.World.YahooFinance.Enabled {
-		feedMgr.Register(world.NewYahooFinanceAdapter(msgBus, cfg.Feeds.World.YahooFinance.PollInterval, cfg.Feeds.World.YahooFinance.Symbols))
+		_ = feedMgr.Register(world.NewYahooFinanceAdapter(msgBus, cfg.Feeds.World.YahooFinance.PollInterval, cfg.Feeds.World.YahooFinance.Symbols))
 	}
 	if cfg.Feeds.World.FRED.Enabled {
-		feedMgr.Register(world.NewFREDAdapter(msgBus, cfg.Feeds.World.FRED.APIKey, cfg.Feeds.World.FRED.PollInterval))
+		_ = feedMgr.Register(world.NewFREDAdapter(msgBus, cfg.Feeds.World.FRED.APIKey, cfg.Feeds.World.FRED.PollInterval))
 	}
 
 	// RSS feeds.
 	if cfg.Feeds.RSS.Enabled {
-		feedMgr.Register(rss.NewAdapter(msgBus, cfg.Feeds.RSS.Feeds, cfg.Feeds.RSS.PollInterval))
+		_ = feedMgr.Register(rss.NewAdapter(msgBus, cfg.Feeds.RSS.Feeds, cfg.Feeds.RSS.PollInterval))
 	}
 
 	// DEX adapters.
 	if cfg.Feeds.DEX.Uniswap.Enabled {
-		feedMgr.Register(dex.NewUniswapAdapter(msgBus, cfg.Feeds.DEX.Uniswap.PollInterval))
+		_ = feedMgr.Register(dex.NewUniswapAdapter(msgBus, cfg.Feeds.DEX.Uniswap.PollInterval))
 	}
 	if cfg.Feeds.DEX.Raydium.Enabled {
-		feedMgr.Register(dex.NewRaydiumAdapter(msgBus, cfg.Feeds.DEX.Raydium.PollInterval))
+		_ = feedMgr.Register(dex.NewRaydiumAdapter(msgBus, cfg.Feeds.DEX.Raydium.PollInterval))
 	}
 	if cfg.Feeds.DEX.Jupiter.Enabled {
-		feedMgr.Register(dex.NewJupiterAdapter(msgBus, cfg.Feeds.DEX.Jupiter.PollInterval))
+		_ = feedMgr.Register(dex.NewJupiterAdapter(msgBus, cfg.Feeds.DEX.Jupiter.PollInterval))
 	}
 	if cfg.Feeds.DEX.Hyperliquid.Enabled {
-		feedMgr.Register(dex.NewHyperliquidAdapter(msgBus, cfg.Feeds.DEX.Hyperliquid.PollInterval))
+		_ = feedMgr.Register(dex.NewHyperliquidAdapter(msgBus, cfg.Feeds.DEX.Hyperliquid.PollInterval))
 	}
 	if cfg.Feeds.DEX.GMX.Enabled {
-		feedMgr.Register(dex.NewGMXAdapter(msgBus, cfg.Feeds.DEX.GMX.PollInterval))
+		_ = feedMgr.Register(dex.NewGMXAdapter(msgBus, cfg.Feeds.DEX.GMX.PollInterval))
 	}
 	if cfg.Feeds.DEX.DYDX.Enabled {
-		feedMgr.Register(dex.NewDYDXAdapter(msgBus, cfg.Feeds.DEX.DYDX.PollInterval))
+		_ = feedMgr.Register(dex.NewDYDXAdapter(msgBus, cfg.Feeds.DEX.DYDX.PollInterval))
 	}
 	if cfg.Feeds.DEX.Drift.Enabled {
-		feedMgr.Register(dex.NewDriftAdapter(msgBus, cfg.Feeds.DEX.Drift.PollInterval))
+		_ = feedMgr.Register(dex.NewDriftAdapter(msgBus, cfg.Feeds.DEX.Drift.PollInterval))
 	}
 	if cfg.Feeds.DEX.Serum.Enabled {
-		feedMgr.Register(dex.NewSerumAdapter(msgBus, cfg.Feeds.DEX.Serum.PollInterval))
+		_ = feedMgr.Register(dex.NewSerumAdapter(msgBus, cfg.Feeds.DEX.Serum.PollInterval))
 	}
 	if cfg.Feeds.DEX.Orca.Enabled {
-		feedMgr.Register(dex.NewOrcaAdapter(msgBus, cfg.Feeds.DEX.Orca.PollInterval))
+		_ = feedMgr.Register(dex.NewOrcaAdapter(msgBus, cfg.Feeds.DEX.Orca.PollInterval))
 	}
 	if cfg.Feeds.DEX.PancakeSwap.Enabled {
-		feedMgr.Register(dex.NewPancakeSwapAdapter(msgBus, cfg.Feeds.DEX.PancakeSwap.PollInterval))
+		_ = feedMgr.Register(dex.NewPancakeSwapAdapter(msgBus, cfg.Feeds.DEX.PancakeSwap.PollInterval))
 	}
 	if cfg.Feeds.DEX.Curve.Enabled {
-		feedMgr.Register(dex.NewCurveAdapter(msgBus, cfg.Feeds.DEX.Curve.PollInterval))
+		_ = feedMgr.Register(dex.NewCurveAdapter(msgBus, cfg.Feeds.DEX.Curve.PollInterval))
+	}
+
+	// File-based adapters (Sibelius, Ravel, ts-base). Opt-in — only
+	// register when a path is configured and the block is enabled.
+	if cfg.Feeds.Sibelius.Enabled && cfg.Feeds.Sibelius.Path != "" {
+		_ = feedMgr.Register(sibelius.NewAdapter(msgBus, sibelius.Config{
+			Path:         cfg.Feeds.Sibelius.Path,
+			PollInterval: cfg.Feeds.Sibelius.PollInterval,
+			TopicPrefix:  cfg.Feeds.Sibelius.TopicPrefix,
+		}))
+	}
+	if cfg.Feeds.Ravel.Enabled && cfg.Feeds.Ravel.Path != "" {
+		_ = feedMgr.Register(ravel.NewAdapter(msgBus, ravel.Config{
+			Path:         cfg.Feeds.Ravel.Path,
+			PollInterval: cfg.Feeds.Ravel.PollInterval,
+			TopicPrefix:  cfg.Feeds.Ravel.TopicPrefix,
+		}))
+	}
+	if cfg.Feeds.TSBaseFiles.Enabled && cfg.Feeds.TSBaseFiles.Path != "" {
+		_ = feedMgr.Register(tsbase_files.NewAdapter(msgBus, tsbase_files.Config{
+			Path:        cfg.Feeds.TSBaseFiles.Path,
+			Interval:    cfg.Feeds.TSBaseFiles.PollInterval,
+			TopicPrefix: cfg.Feeds.TSBaseFiles.TopicPrefix,
+		}))
 	}
 
 	// Start all feeds.
 	g.Go(func() error {
 		return feedMgr.StartAll(ctx, 10*time.Second)
+	})
+
+	// Trade aggregator — computes VWAP, OHLCV, quantiles from raw trades.
+	tradeAgg := feeds.NewAggregator(msgBus)
+	g.Go(func() error {
+		return tradeAgg.Run(ctx)
+	})
+
+	// Plugin manager.
+	home, _ := os.UserHomeDir()
+	pluginDir := filepath.Join(home, ".config", "notbbg", "plugins")
+	pluginMgr := plugins.NewManager(msgBus, pluginDir)
+	if err := pluginMgr.LoadAll(); err != nil {
+		slog.Warn("plugin load", "error", err)
+	}
+	g.Go(func() error {
+		return pluginMgr.StartAll(ctx)
 	})
 
 	// System health monitor.
@@ -354,6 +410,7 @@ func main() {
 		g.Go(func() error {
 			return dlWriter.Run(ctx)
 		})
+		slog.Info("datalake writer enabled", "path", cfg.Datalake.Path)
 	}
 
 	// Cron scheduler.
@@ -371,7 +428,7 @@ func main() {
 		return nil
 	})
 	for _, jc := range cfg.Cron {
-		cronSched.AddJob(cronpkg.Job{
+		_ = cronSched.AddJob(cronpkg.Job{
 			Name: jc.Name, Schedule: jc.Schedule,
 			Action: jc.Action, Args: jc.Args, Enabled: jc.Enabled,
 		})
@@ -400,6 +457,11 @@ func main() {
 	if cfg.Server.EnableHTTP {
 		httpGW := transport.NewHTTPGateway(msgBus, cfg.Server.HTTPAddr, authMgr)
 		httpGW.SetSearchFn(searchIndex.SearchJSON)
+		// Wire datalake reader for historical queries.
+		if cfg.Datalake.Enabled && cfg.Datalake.Path != "" {
+			httpGW.SetDatalakeReader(datalake.NewReader(cfg.Datalake.Path))
+			httpGW.SetDateRangeHandler(daterange.New(cfg.Datalake.Path))
+		}
 		// Enable HTTPS only for non-localhost addresses (LAN/remote access).
 		if !strings.HasPrefix(cfg.Server.HTTPAddr, "127.0.0.1") && !strings.HasPrefix(cfg.Server.HTTPAddr, "localhost") {
 			home, _ := os.UserHomeDir()
@@ -451,7 +513,7 @@ func handleRequest(req *transport.WireMsg, sub **bus.Subscriber, authenticated *
 		}
 		patterns := req.Patterns
 		if len(patterns) == 0 {
-			patterns = []string{"*.*.*", "news", "alert", "feed.status", "system.health", "indicator.*", "agent.suggestion"}
+			patterns = []string{"*.*.*", "news", "alert", "feed.status", "system.health", "indicator.*", "agent.suggestion", "plugin.*", "plugin.*.*"}
 		}
 		*sub = msgBus.Subscribe(4096, patterns...)
 		slog.Info("client subscribed", "patterns", patterns)
@@ -461,12 +523,12 @@ func handleRequest(req *transport.WireMsg, sub **bus.Subscriber, authenticated *
 		if err != nil {
 			resp := &transport.WireMsg{Type: transport.MsgPairFail, Error: err.Error()}
 			data, _ := resp.Encode()
-			conn.WriteFrame(data)
+			_ = conn.WriteFrame(data)
 		} else {
 			*authenticated = true
 			resp := &transport.WireMsg{Type: transport.MsgPairOK, SessionID: sessionID}
 			data, _ := resp.Encode()
-			conn.WriteFrame(data)
+			_ = conn.WriteFrame(data)
 			slog.Info("client paired", "name", req.ClientName, "session", sessionID[:8])
 		}
 
@@ -486,7 +548,7 @@ func handleRequest(req *transport.WireMsg, sub **bus.Subscriber, authenticated *
 			})
 			resp := &transport.WireMsg{Type: transport.MsgAlertCreated, SessionID: id}
 			data, _ := resp.Encode()
-			conn.WriteFrame(data)
+			_ = conn.WriteFrame(data)
 		}
 
 	case transport.MsgQuery:
@@ -502,7 +564,23 @@ func handleRequest(req *transport.WireMsg, sub **bus.Subscriber, authenticated *
 	case transport.MsgPing:
 		pong := &transport.WireMsg{Type: transport.MsgPong}
 		data, _ := pong.Encode()
-		conn.WriteFrame(data)
+		_ = conn.WriteFrame(data)
+
+	case transport.MsgPluginInput:
+		// Route plugin input event to the correct plugin via bus.
+		// The TUI sends: {type: "plugin_input", topic: "plugin.<name>.screen", payload: InputEvent}
+		// We derive the input topic from the screen topic: "plugin.<name>.screen" → "plugin.<name>.input"
+		if req.Topic != "" {
+			inputTopic := strings.TrimSuffix(req.Topic, ".screen") + ".input"
+			var evt any
+			if json.Unmarshal(req.Payload, &evt) == nil {
+				msgBus.Publish(bus.Message{
+					Topic:   inputTopic,
+					Payload: evt,
+				})
+				slog.Info("plugin input routed", "topic", inputTopic)
+			}
+		}
 	}
 }
 
@@ -513,7 +591,7 @@ func handleQuery(req *transport.WireMsg, conn *transport.FramedConn, store *cach
 	if len(parts) < 1 {
 		resp := &transport.WireMsg{Type: transport.MsgQueryResult, Error: "query format: bucket/prefix"}
 		data, _ := resp.Encode()
-		conn.WriteFrame(data)
+		_ = conn.WriteFrame(data)
 		return
 	}
 
@@ -539,7 +617,7 @@ func handleQuery(req *transport.WireMsg, conn *transport.FramedConn, store *cach
 	if err != nil && err.Error() != "limit reached" {
 		resp := &transport.WireMsg{Type: transport.MsgQueryResult, Error: err.Error()}
 		data, _ := resp.Encode()
-		conn.WriteFrame(data)
+		_ = conn.WriteFrame(data)
 		return
 	}
 
@@ -550,7 +628,7 @@ func handleQuery(req *transport.WireMsg, conn *transport.FramedConn, store *cach
 		Payload: payload,
 	}
 	data, _ := resp.Encode()
-	conn.WriteFrame(data)
+	_ = conn.WriteFrame(data)
 
 	slog.Debug("query served", "query", req.Query, "results", len(results))
 }

@@ -1,0 +1,12 @@
+name: optimizer
+command: ./optimizer
+args: []
+input_topics:
+  - "ohlc.binance.*"
+  - "plugin.optimizer.input"
+output_topics:
+  - "plugin.optimizer.screen"
+screens:
+  - id: "OPTIMIZER"
+    label: "Optimizer"
+    icon: "options-outline"

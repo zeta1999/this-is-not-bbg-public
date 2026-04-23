@@ -1,0 +1,11 @@
+name: swaption
+command: ./swaption
+args: []
+input_topics:
+  - "plugin.swaption.input"
+output_topics:
+  - "plugin.swaption.screen"
+screens:
+  - id: "SWAPTION"
+    label: "Swaption Cube"
+    icon: "cube-outline"

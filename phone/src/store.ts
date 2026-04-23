@@ -37,6 +37,14 @@ export interface FeedStatus {
   errorCount: number;
 }
 
+export interface PluginScreen {
+  id: string; plugin: string; label: string; icon: string; topic: string;
+}
+
+export interface PluginStyledLine {
+  text: string; style: string;
+}
+
 export interface PhoneStore {
   connected: boolean;
   prices: Map<string, PriceEntry>;
@@ -45,6 +53,8 @@ export interface PhoneStore {
   lobKeys: string[];
   newsItems: NewsItem[];
   feedStatuses: FeedStatus[];
+  pluginScreens: PluginScreen[];
+  pluginLines: Record<string, PluginStyledLine[]>;
 }
 
 // Server address — set after QR pairing.
@@ -61,11 +71,13 @@ export function usePhoneStore(token: string): PhoneStore {
   const [lobKeys, setLobKeys] = useState<string[]>([]);
   const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
   const [feedStatuses, setFeedStatuses] = useState<FeedStatus[]>([]);
+  const [pluginScreens, setPluginScreens] = useState<PluginScreen[]>([]);
+  const [pluginLines, setPluginLines] = useState<Record<string, PluginStyledLine[]>>({});
 
   useEffect(() => {
     if (!serverUrl || !token) return;
 
-    const url = `${serverUrl}/api/v1/subscribe?patterns=ohlc.*.*,lob.*.*,news,feed.status&token=${token}`;
+    const url = `${serverUrl}/api/v1/subscribe?patterns=ohlc.*.*,lob.*.*,news,feed.status,plugin.*,plugin.*.*&token=${token}`;
     const es = new EventSource(url);
 
     es.onopen = () => setConnected(true);
@@ -124,6 +136,13 @@ export function usePhoneStore(token: string): PhoneStore {
             if (idx >= 0) { const next = [...prev]; next[idx] = entry; return next; }
             return [...prev, entry].sort((a, b) => a.name.localeCompare(b.name));
           });
+
+        } else if (topic === "plugin.registry") {
+          setPluginScreens(p.screens || []);
+
+        } else if (topic.startsWith("plugin.") && topic.endsWith(".screen")) {
+          const lines: PluginStyledLine[] = (p.lines || []).map((l: any) => ({ text: l.text || "", style: l.style || "normal" }));
+          setPluginLines((prev) => ({ ...prev, [topic]: lines }));
         }
       } catch {}
     };
@@ -131,5 +150,5 @@ export function usePhoneStore(token: string): PhoneStore {
     return () => es.close();
   }, [token, serverUrl]);
 
-  return { connected, prices, priceKeys, lobData, lobKeys, newsItems, feedStatuses };
+  return { connected, prices, priceKeys, lobData, lobKeys, newsItems, feedStatuses, pluginScreens, pluginLines };
 }

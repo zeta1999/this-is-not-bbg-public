@@ -16,7 +16,21 @@ import (
 	"time"
 
 	"github.com/notbbg/notbbg/server/internal/bus"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
+
+// marshalPayload renders a bus payload to JSON. Proto messages go
+// through protojson so the output is canonical protobuf JSON that
+// round-trips via protojson.Unmarshal (what schemacheck verifies);
+// other payloads (plain structs, maps, strings) fall back to
+// encoding/json.
+func marshalPayload(payload any) ([]byte, error) {
+	if m, ok := payload.(proto.Message); ok {
+		return protojson.Marshal(m)
+	}
+	return json.Marshal(payload)
+}
 
 // Config for the datalake writer.
 type Config struct {
@@ -72,7 +86,9 @@ func (w *Writer) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("datalake writer stopped", "written", w.written.Load())
+			slog.Info("datalake writer stopped",
+				"written", w.written.Load(),
+				"bus_dropped", sub.Dropped())
 			return nil
 
 		case msg, ok := <-sub.C:
@@ -82,7 +98,10 @@ func (w *Writer) Run(ctx context.Context) error {
 			w.writeMessage(msg)
 
 		case <-statsTicker.C:
-			slog.Info("datalake stats", "written", w.written.Load(), "open_files", len(w.files))
+			slog.Info("datalake stats",
+				"written", w.written.Load(),
+				"open_files", len(w.files),
+				"bus_dropped", sub.Dropped())
 		}
 	}
 }
@@ -129,14 +148,25 @@ func (w *Writer) writeMessage(msg bus.Message) {
 
 	filePath := filepath.Join(w.basePath, partPath, datePart, "data.jsonl")
 
-	// Build the record: topic + timestamp + payload.
-	record := map[string]any{
-		"_topic":     msg.Topic,
-		"_timestamp": now.Format(time.RFC3339Nano),
-		"payload":    msg.Payload,
+	// Build the record: topic + timestamp + payload. Payload is encoded
+	// via marshalPayload so proto messages land in canonical protojson.
+	payloadJSON, err := marshalPayload(msg.Payload)
+	if err != nil {
+		slog.Debug("datalake marshal error", "topic", msg.Topic, "error", err)
+		return
 	}
-
-	line, err := json.Marshal(record)
+	// Build the envelope with a pre-marshalled payload so we don't
+	// double-encode.
+	envelope := struct {
+		Topic     string          `json:"_topic"`
+		Timestamp string          `json:"_timestamp"`
+		Payload   json.RawMessage `json:"payload"`
+	}{
+		Topic:     msg.Topic,
+		Timestamp: now.Format(time.RFC3339Nano),
+		Payload:   payloadJSON,
+	}
+	line, err := json.Marshal(envelope)
 	if err != nil {
 		return
 	}
@@ -150,7 +180,9 @@ func (w *Writer) writeMessage(msg bus.Message) {
 	}
 
 	w.mu.Lock()
-	f.Write(line)
+	if _, err := f.Write(line); err != nil {
+		slog.Debug("datalake append error", "path", filePath, "error", err)
+	}
 	w.mu.Unlock()
 	w.written.Add(1)
 }

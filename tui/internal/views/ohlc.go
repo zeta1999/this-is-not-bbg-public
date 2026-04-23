@@ -37,11 +37,14 @@ const sidebarWidth = 28
 
 // RenderOHLC renders an ASCII candlestick chart (kept for compatibility).
 func RenderOHLC(candles []Candle, width, height int, instrument, exchange, timeframe string) string {
-	return RenderOHLCWithSidebar(candles, width, height, instrument, exchange, timeframe, nil, nil)
+	return RenderOHLCWithSidebar(candles, width, height, instrument, exchange, timeframe, nil, nil, "")
 }
 
-// RenderOHLCWithSidebar renders the OHLC chart with an instrument sidebar on the right.
-func RenderOHLCWithSidebar(candles []Candle, width, height int, instrument, exchange, timeframe string, sidebar []OHLCSidebarEntry, availableTFs []string) string {
+// RenderOHLCWithSidebar renders the OHLC chart with an instrument
+// sidebar on the right. loadingHint, when non-empty, is shown in
+// amber next to the timeframe list so the user sees progressive
+// DataRange fetches without the panel blocking.
+func RenderOHLCWithSidebar(candles []Candle, width, height int, instrument, exchange, timeframe string, sidebar []OHLCSidebarEntry, availableTFs []string, loadingHint string) string {
 	// Reserve space for sidebar if we have entries.
 	chartWidth := width
 	if len(sidebar) > 0 {
@@ -51,7 +54,7 @@ func RenderOHLCWithSidebar(candles []Candle, width, height int, instrument, exch
 		}
 	}
 
-	chart := renderOHLCChart(candles, chartWidth, height, instrument, exchange, timeframe, availableTFs)
+	chart := renderOHLCChart(candles, chartWidth, height, instrument, exchange, timeframe, availableTFs, loadingHint)
 
 	if len(sidebar) == 0 {
 		return chart
@@ -89,7 +92,7 @@ func RenderOHLCWithSidebar(candles []Candle, width, height int, instrument, exch
 	return strings.Join(lines, "\n")
 }
 
-func renderOHLCChart(candles []Candle, width, height int, instrument, exchange, timeframe string, availableTFs []string) string {
+func renderOHLCChart(candles []Candle, width, height int, instrument, exchange, timeframe string, availableTFs []string, loadingHint string) string {
 	// Timeframe indicator.
 	tfStr := ""
 	if len(availableTFs) > 0 {
@@ -103,6 +106,9 @@ func renderOHLCChart(candles []Candle, width, height int, instrument, exchange, 
 			}
 		}
 		tfStr = "  " + strings.Join(parts, " ")
+	}
+	if loadingHint != "" {
+		tfStr += "  " + amberStyle.Render("⟳ "+loadingHint)
 	}
 
 	if len(candles) == 0 {
