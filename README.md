@@ -5,7 +5,8 @@
 <h1 align="center">notbbg</h1>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/version-0.2.0-ff9d2b?style=flat-square" alt="version"></a>
+  <a href="#"><img src="https://img.shields.io/badge/version-0.3.0-ff9d2b?style=flat-square" alt="version"></a>
+  <a href="#"><img src="https://img.shields.io/badge/build-stable-2ed573?style=flat-square" alt="build"></a>
   <a href="#"><img src="https://img.shields.io/badge/go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white" alt="go"></a>
   <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows*-2ed573?style=flat-square" alt="platforms"></a>
   <a href="#"><img src="https://img.shields.io/badge/clients-TUI%20%7C%20Desktop%20%7C%20Phone-ff9d2b?style=flat-square" alt="clients"></a>
@@ -28,70 +29,13 @@
 
 ---
 
-> **v0.2.0** — actively developed. Phone app is experimental. See [SPEC.md](SPEC.md) for the roadmap.
-
-> ⚠️ **Interim update — 2026-04-29.** `main` is ahead of the last
-> publicly-pushed commit by several in-flight tracks (adapter
-> wiring for Sibelius/Ravel/tsbase-files, HTTP `GetDataRange`
-> streaming, TUI progressive history, phone TRADES ANR fix +
-> modal picker, Uniswap verification, OHLC pipeline cleanup,
-> formulettes plugin REPL). These haven't gone through full
-> manual end-to-end testing across all three GUIs yet. If you
-> need a build that "just runs", check out the last published
-> push at commit [`289139c`](../../commit/289139c) (or
-> `git checkout 289139c`) — that's the last manually-verified
-> release point. See [STATUS.md](STATUS.md) for what's new on
-> `HEAD` and [TESTING.md](TESTING.md) for the manual-test
-> procedure.
+> **This is the demo / OSS cut.** It's the stable build — boots on a fresh
+> clone with no API keys, ships a small set of example plugins, and
+> covers the surfaces a casual trader actually uses. A handful of
+> additional plugins (OMS, backtester, pricer, vol tools, etc.) may
+> ship later — no promises, no timeline.
 
 ![TUI OHLC](image/README/tui-ohlc.png)
-
-## What's New (2026-04)
-
-A run of recent work added several user-visible features. Screenshot
-placeholders below — capture each surface and drop the file at the
-indicated path.
-
-- **OHLC progressive backfill** — newest-first: a concurrent 2h
-  pass across all (symbol × timeframe) lands first, then a 365d
-  deep grind pages newest→oldest. Live (`ohlc.*`) and historical
-  (`ohlc-historical.*`) topics are split end-to-end so backfills
-  no longer corrupt the SANITY panel's "current mid".
-  → `image/README/tui-ohlc-backfill.png`
-- **TRADES panel** — per-instrument tape with VWAP / Volume /
-  Trades-per-second, virtualized rows, modal picker for
-  instrument + venue across all three clients.
-  → `image/README/tui-trades.png`,
-  `image/README/desktop-trades.png`,
-  `image/README/phone/trades.png`
-- **SANITY / consistency monitor** — staleness gate (>5min bars
-  rejected) + monotonic-timestamp guard prevent year-old
-  klines from clobbering the live mid; scrollable with j/k and
-  a `↕ N/M` indicator.
-  → `image/README/tui-sanity.png`,
-  `image/README/desktop-sanity.png`
-- **PLOT image cells** — plugin-rendered images surface in the
-  TUI's PLOT panel; `o` opens in default viewer, `y` copies the
-  filesystem path to the clipboard.
-  → `image/README/tui-plot.png`
-- **Formulettes plugin (FORM)** — long-lived `bs-cli --repl`
-  child for sub-millisecond Black-Scholes recompute, with a
-  5s heartbeat republish so the panel never reads "waiting for
-  data".
-  → `image/README/tui-form.png`,
-  `image/README/desktop-form.png`
-- **Phone TRADES modal picker** — replaces the old horizontal
-  ticker selector with a LOB-style modal showing instrument +
-  exchange and a search box. Fixes the "BTCUSDT collapsed across
-  three venues" regression.
-  → `image/README/phone/trades.png`,
-  `image/README/phone/trades-picker.png`
-- **Datalake event-time partitioning** — historical bars now
-  partition by event time, so a year-old kline written today
-  lands in `year=2025/month=05/...` rather than
-  `year=2026/...`. DataRange queries return real history.
-  → `image/README/datalake-tree.png` *(optional: terminal
-  screenshot of `tree datalake/` showing year-spanning partitions)*
 
 ## What's Inside
 
@@ -101,7 +45,7 @@ Every client talks to the same Go server, so panels stay in sync across devices.
 
 | Client | Stack | Transport | Notes |
 |--------|-------|-----------|-------|
-| **TUI** | Go + Bubbletea + Lipgloss | Unix socket | 7 panels, embedded Claude agent, full keyboard |
+| **TUI** | Go + Bubbletea + Lipgloss | Unix socket | 10 core panels + plugin tabs, embedded Claude agent, full keyboard |
 | **Desktop** | Electron + React 19 + Vite | HTTP / SSE | 1:1 port of TUI logic, TradingView charts |
 | **Phone** | React Native + Expo | HTTP / SSE | Read-only, sub-second updates via SSE, QR-pair from TUI |
 
@@ -167,16 +111,26 @@ Verify before continuing: `go version` (need 1.25+) and `node --version` (need v
 
 ## Quick Start
 
-One command per surface — pick what you want to look at.
+Fresh-clone first-launch — no API keys, six no-auth CEX venues
+(binance / okx / bybit / bitget / gate / mexc / htx), three majors
+(BTC / ETH / SOL), 7d backfill, the demo plugin set:
 
 ```bash
-# Build everything (server + TUI + collector).
 make build
+make oss-bootstrap    # plugins-oss + run-server-oss back-to-back
+```
 
-# Terminal 1 — server (foreground; Ctrl-C to stop).
-make run-server
+Or break it into the two steps:
 
-# Terminal 2 — pick one of:
+```bash
+make build
+make plugins-oss      # deploy hello-world + formula-demo + monitor + ohlc-png + formulettes-runner
+make run-server-oss   # uses server/configs/dev-oss.yaml
+```
+
+In another terminal, pick a client:
+
+```bash
 make run-tui          # bubbletea TUI
 make run-desktop      # Electron + React
 make run-phone        # Expo dev server (press 'a'/'i' for Android/iOS)
@@ -185,22 +139,8 @@ make run-phone        # Expo dev server (press 'a'/'i' for Android/iOS)
 make smoke
 ```
 
-### OSS / fresh-clone bootstrap
-
-For a lightweight cut that boots cleanly without API keys (binance +
-free DEX adapters, 3 majors, 7d backfill, demo plugins only):
-
-```bash
-make build
-make plugins-oss      # deploy SDK demos + formulettes + monitor + ohlc-png
-make run-server-oss   # uses server/configs/dev-oss.yaml
-# (or:  make oss-bootstrap   — does both back-to-back)
-```
-
 The OSS profile lives at `scripts/plugin-profiles/oss.txt`; the
-matching server config lives at `server/configs/dev-oss.yaml`. Switch
-back to the full setup any time with `make plugins-full && make
-run-server`.
+matching server config lives at `server/configs/dev-oss.yaml`.
 
 ### Phone pairing
 
@@ -291,8 +231,6 @@ TUI's own Go TLS stack) handle the handshake fine.
 | **Article Detail** | **Feed Monitor** | **Phone Pairing** |
 | ![](image/README/tui-news-2.png) | ![](image/README/tui-mon.png) | ![](image/README/tui-pair.png) |
 
-**New in 2026-04** *(placeholders — capture and drop in at these paths)*:
-
 | Trades Tape | Sanity / Consistency | OHLC Backfill |
 |---|---|---|
 | ![](image/README/tui-trades.png) | ![](image/README/tui-sanity.png) | ![](image/README/tui-ohlc-backfill.png) |
@@ -305,19 +243,15 @@ TUI's own Go TLS stack) handle the handshake fine.
 |---|---|---|---|
 | ![](image/README/desktop-ohlc.png) | ![](image/README/desktop-lob.png) | ![](image/README/desktop-news.png) | ![](image/README/desktop-pair.png) |
 
-**New in 2026-04** *(placeholders)*:
-
 | Trades Tape | Sanity / Consistency | Formulettes (FORM) | OHLC Streaming History |
 |---|---|---|---|
 | ![](image/README/desktop-trades.png) | ![](image/README/desktop-sanity.png) | ![](image/README/desktop-form.png) | ![](image/README/desktop-ohlc-history.png) |
 
-### Phone (React Native, experimental)
+### Phone (React Native)
 
 | Watchlist | LOB | News (BM25) | Settings |
 |---|---|---|---|
 | ![](image/README/phone/watchlist.png) | ![](image/README/phone/lob.png) | ![](image/README/phone/news.png) | ![](image/README/phone/settings.png) |
-
-**New in 2026-04** *(placeholders)*:
 
 | Trades (modal picker) | Trades — Picker Open | OHLC | Sanity |
 |---|---|---|---|
@@ -339,16 +273,27 @@ Server (Go)                          Collector (remote)
 
 ## Keyboard Shortcuts (TUI)
 
+A few bindings shifted in this cut — the panel list grew (TRADES,
+SANITY, SETTINGS were added) and digit keys are now reserved for
+plugin cell input, so panel-jump moved to `Alt+digit`.
+
 | Key | Action |
 |-----|--------|
-| `1`–`7` | Jump to panel (OHLC, LOB, NEWS, ALERTS, MON, LOG, AGENT) |
-| `TAB` / `Shift+TAB` | Cycle panels |
-| `[` / `]` or `←` / `→` | Previous / next instrument |
-| `-` / `+` | Previous / next timeframe |
-| `j` / `k` | Navigate news headlines |
-| `Enter` | Read article / send agent input |
-| `/` | Search instruments or filter news |
-| `h` or `?` | Help overlay |
+| `Alt+1`–`Alt+9` | Jump to panel (OHLC, LOB, TRADES, NEWS, ALERTS, SANITY, MON, LOG, AGENT) |
+| `TAB` / `Shift+TAB` | Cycle panels (incl. SETTINGS and any loaded plugin tabs) |
+| `[` / `]` or `←` / `→` | Previous / next instrument (OHLC / LOB / TRADES) |
+| `-` / `+` | Previous / next timeframe (OHLC) |
+| `H` | Load 24h history via DataRange (OHLC, non-blocking) |
+| `j` / `k` or `↓` / `↑` | Step scroll (NEWS, SANITY, MON, LOG, SETTINGS, AGENT, overlays) |
+| `PgDn` / `PgUp` or `Ctrl+F` / `Ctrl+B` | Page-step scroll |
+| `g` / `G` | Jump to top / bottom of scrollable panel |
+| `Enter` | Read article / send agent input / commit cell edit |
+| `/` or `:` | Enter command mode (search / filter / `/BTC`, `/LOB`, ...) |
+| `o` / `y` | Open image cell in viewer / copy path (PLOT) |
+| `X` | Cancel running plugin job on the active plugin tab |
+| `h` | Global help overlay |
+| `?` | Per-tab help overlay |
+| `ESC` | Close overlay / clear filter / cancel command |
 | `q` | Quit |
 
 ## CLI Commands
@@ -395,17 +340,19 @@ Data persisted as Hive-partitioned JSONL:
 datalake/type=ohlc/exchange=binance/instrument=BTCUSDT/year=2026/month=03/day=30/data.jsonl
 ```
 
-## Roadmap
+## Maybe Later
 
-Planned for future releases (current version is **v0.2.0**):
+This OSS cut ships a small set of demo plugins (`hello-world`,
+`formula-demo`, `monitor`, `ohlc-png`, `formulettes-runner`). The
+plugin SDK is here and the loader works against any binary that
+speaks the protocol — additional plugins (OMS, backtester, pricer,
+optimizer, vol tools, portfolio, swaption, timeseries) live in the
+internal tree and *may* land in a future release. No promises, no
+timeline.
 
-- **Plugin system** — C/C++ native plugins loaded via shared libs (OMS, backtesting, regime detection, SIMD indicators)
-- **More feeds** — OKX/Bitget perpetuals, Gate.io, MEXC, topic-specific RSS (Solana, semiconductors, macro)
-- **News polish** — sort by freshness, configurable retention, RSS error monitoring
-- **Formal verification** — Gobra proofs for relay invariants, TLA+ model checking
-- **Platform** — Windows support (builds today, not fully tested yet), macOS app signing, Android APK distribution
-
-See [SPEC.md](SPEC.md) for the full backlog.
+Other things on the wishlist: more CEX/DEX adapters, Windows
+hardening, macOS app signing, Android APK distribution, Gobra/TLA+
+proofs for the backpressure protocol. 
 
 ## Project Structure
 
@@ -413,10 +360,10 @@ See [SPEC.md](SPEC.md) for the full backlog.
 server/           Go server — feeds, bus, cache, auth, transport, datalake, cron
 tui/              Go TUI — bubbletea panels, agent terminal, CLI commands
 desktop/          Electron + React desktop app
-phone/            React Native + Expo phone app (experimental, read-only)
+phone/            React Native + Expo phone app (read-only)
 formal/           TLA+ specifications (backpressure protocol)
 scripts/          local-test.sh, local-test-desktop.sh
-docs/             Data update playbook, per-dataset audits, protocol notes
+
 ```
 
 ## Dependencies
@@ -426,22 +373,13 @@ docs/             Data update playbook, per-dataset audits, protocol notes
 | Server | Go 1.25 | — |
 | TUI | Bubbletea + Lipgloss | MIT |
 | Desktop | Electron + React 19 + Vite | MIT |
-| Phone | React Native + Expo (experimental) | MIT |
+| Phone | React Native + Expo | MIT |
 | Charts | lightweight-charts (TradingView) | Apache 2.0 |
 | PQC | Cloudflare circl (ML-KEM-768) | BSD-3 |
 | Cache | BBolt (etcd) | MIT |
 | Crypto | XChaCha20-Poly1305, Argon2id (golang.org/x/crypto) | BSD-3 |
 | RSS | gofeed | MIT |
 | WebSocket | gorilla/websocket | BSD-2 |
-
-## Documentation
-
-- [PHONE-TESTING.md](PHONE-TESTING.md) — Phone pairing, testing, APK builds
-- [TESTING.md](TESTING.md) — Manual testing guide (all components)
-- [SECURITY.md](SECURITY.md) — Security model, pairing flow, threat analysis
-- [PROTOCOLS.md](PROTOCOLS.md) — Wire protocol, backpressure, PQC handshake
-- [SKILLS.md](SKILLS.md) — Agent skills and TUI keyboard reference
-- [SPEC.md](SPEC.md) — Roadmap and open TODOs
 
 ## License
 
