@@ -105,6 +105,18 @@ Local                                    Remote (home server)
 - HTTP agent API in the desktop app
 - Skills defined in [SKILLS.md](SKILLS.md) — query feeds, explain candles, search news
 
+## Requirements
+
+Install these before running anything — the Quick Start commands will fail without them.
+
+- **Go 1.25+** — https://go.dev/dl/ or install with your package manager
+- **Node 20+** — https://nodejs.org/en/download or install with your package manager
+- **make** — https://gnuwin32.sourceforge.net/packages/make.htm (windows only, already installed on macOS/Linux)
+- **Expo CLI + EAS** — https://docs.expo.dev/get-started/installation/ (only needed for phone app builds)
+- **A remote machine with an open port** — collector backup only (optional)
+
+Verify before continuing: `go version` (need 1.25+) and `node --version` (need v20+)
+
 ## Quick Start
 
 ```bash
@@ -248,7 +260,7 @@ scripts/          local-test.sh, local-test-desktop.sh
 docs/             Data update playbook, per-dataset audits, protocol notes
 ```
 
-## Dependencies (BSOM)
+## Dependencies
 
 | Component | Technology | License |
 |-----------|-----------|---------|
@@ -262,13 +274,6 @@ docs/             Data update playbook, per-dataset audits, protocol notes
 | Crypto | XChaCha20-Poly1305, Argon2id (golang.org/x/crypto) | BSD-3 |
 | RSS | gofeed | MIT |
 | WebSocket | gorilla/websocket | BSD-2 |
-
-## Requirements
-
-- Go 1.25+
-- Node 20+ (for desktop and phone)
-- Expo CLI + EAS (for phone APK builds)
-- A remote machine with a reachable port (optional, for collector backup)
 
 ## Documentation
 
