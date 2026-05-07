@@ -1,0 +1,2 @@
+{"source":"sibelius","kind":"voltools.snap","observedAt":"2026-04-25T12:00:00Z","payload":{"strike":100.0,"expiry":"2027-01-01","iv":0.18}}
+{"source":"tsbase_files","kind":"yield_curve","observedAt":"2026-04-25T12:00:00Z","payload":{"tenor":"5Y","yield":0.045,"currency":"USD"}}

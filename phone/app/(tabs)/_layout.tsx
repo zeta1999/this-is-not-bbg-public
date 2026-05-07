@@ -42,6 +42,12 @@ const TAB_CONFIG: {
     iconFocused: "notifications",
   },
   {
+    name: "sanity",
+    title: "Sanity",
+    icon: "shield-checkmark-outline",
+    iconFocused: "shield-checkmark",
+  },
+  {
     name: "plugins",
     title: "Plugins",
     icon: "extension-puzzle-outline",

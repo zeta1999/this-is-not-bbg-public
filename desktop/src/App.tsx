@@ -10,20 +10,52 @@ import { AgentPanel } from "./components/AgentPanel";
 import { PluginPanel } from "./components/PluginPanel";
 import { CellGridPanel } from "./components/CellGridPanel";
 import { TradesPanel } from "./components/TradesPanel";
+import { SanityPanel } from "./components/SanityPanel";
 import { PairModal } from "./components/PairModal";
 import { useStore, PluginScreen } from "./store";
 
-const CORE_TABS = ["OHLC", "LOB", "TRADES", "NEWS", "ALERTS", "MON", "LOG", "AGENT"] as const;
+const CORE_TABS = ["OHLC", "LOB", "TRADES", "NEWS", "ALERTS", "MON", "SANITY", "LOG", "AGENT"] as const;
 type CoreTab = typeof CORE_TABS[number];
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>("OHLC");
   const [clock, setClock] = useState("");
   const [showPair, setShowPair] = useState(false);
+  const [ohlcSearchFocus, setOhlcSearchFocus] = useState(0);
+  // Agent state lives at App level so it survives AgentPanel
+  // unmounting on tab switches. Children of `renderPanel()` are
+  // remounted whenever activeTab changes, which would otherwise wipe
+  // the conversation every time the user looked at OHLC.
+  const [agentLines, setAgentLines] = useState<string[]>(["Type a message and press Enter to ask Claude."]);
+  const [agentInput, setAgentInput] = useState("");
+  const [agentLoading, setAgentLoading] = useState(false);
+  // nowTick advances every 250ms so the connection-latency
+  // indicator updates smoothly even during quiet markets without
+  // re-rendering the whole tree on each SSE event.
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
   const store = useStore();
 
   // Build dynamic tab list: core tabs + plugin screens.
   const allTabs: string[] = [...CORE_TABS, ...store.pluginScreens.map((s) => s.id)];
+
+  // Scroll-to-active for the tab strip. The strip overflows on
+  // narrow windows once plugins register (HELLO, PORTFOLIO,
+  // SWAPTION, …); without this, off-screen tabs were unreachable
+  // unless the operator knew the keyboard shortcut.
+  const tabStripRef = React.useRef<HTMLDivElement>(null);
+  const activeTabRef = React.useRef<HTMLButtonElement>(null);
+  React.useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+  }, [activeTab]);
+  const scrollTabs = (dir: -1 | 1) => {
+    const el = tabStripRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.6), behavior: "smooth" });
+  };
 
   // Clock — update every second.
   useEffect(() => {
@@ -81,6 +113,15 @@ const App: React.FC = () => {
       // -/+ — timeframe cycling (OHLC only).
       if (e.key === "-" && activeTab === "OHLC") { store.cycleTF(-1); return; }
       if ((e.key === "=" || e.key === "+") && activeTab === "OHLC") { store.cycleTF(1); return; }
+
+      // `/` — focus OHLC ticker search (TUI parity). Signal counter
+      // increments so the child effect re-fires even if signal was
+      // non-zero before.
+      if (e.key === "/" && activeTab === "OHLC") {
+        e.preventDefault();
+        setOhlcSearchFocus((n) => n + 1);
+        return;
+      }
     };
 
     window.addEventListener("keydown", handler);
@@ -89,14 +130,19 @@ const App: React.FC = () => {
 
   const renderPanel = () => {
     switch (activeTab) {
-      case "OHLC": return <OHLCChart ohlcData={store.ohlcData} ohlcKeys={store.ohlcKeys} activeIdx={store.ohlcActiveIdx} setActiveIdx={store.setOhlcActiveIdx} cycleTF={store.cycleTF} fetchOHLCHistory={store.fetchOHLCHistory} fetchOHLCHistoryStreaming={store.fetchOHLCHistoryStreaming} ohlcLoading={store.ohlcLoading} />;
+      case "OHLC": return <OHLCChart ohlcData={store.ohlcData} ohlcKeys={store.ohlcKeys} activeIdx={store.ohlcActiveIdx} setActiveIdx={store.setOhlcActiveIdx} cycleTF={store.cycleTF} fetchOHLCHistory={store.fetchOHLCHistory} fetchOHLCHistoryStreaming={store.fetchOHLCHistoryStreaming} ohlcLoading={store.ohlcLoading} focusSearchSignal={ohlcSearchFocus} />;
       case "LOB": return <LOBViewer lobData={store.lobData} lobKeys={store.lobKeys} activeIdx={store.lobActiveIdx} setActiveIdx={store.setLobActiveIdx} />;
       case "TRADES": return <TradesPanel aggs={store.tradeAggs} snaps={store.tradeSnaps} keys={store.tradeKeys} />;
       case "NEWS": return <NewsPanel items={store.newsItems} />;
       case "ALERTS": return <AlertsPanel items={store.alertItems} />;
-      case "MON": return <MonitorPanel feeds={store.feedStatuses} />;
+      case "MON": return <MonitorPanel feeds={store.feedStatuses} plugins={store.pluginStatuses} busStats={store.busStats} wals={store.walStats} />;
+      case "SANITY": return <SanityPanel snapshots={store.sanitySnapshots} />;
       case "LOG": return <LogPanel lines={store.logLines} />;
-      case "AGENT": return <AgentPanel />;
+      case "AGENT": return <AgentPanel
+        lines={agentLines} setLines={setAgentLines}
+        input={agentInput} setInput={setAgentInput}
+        loading={agentLoading} setLoading={setAgentLoading}
+      />;
       default: {
         // Check if this is a plugin screen.
         const ps = store.pluginScreens.find((s) => s.id === activeTab);
@@ -115,9 +161,9 @@ const App: React.FC = () => {
 
   // Bottom bar hints — same as TUI.
   let panelHint = "";
-  if (activeTab === "OHLC") panelHint = "  [/]:pair  -/+:timeframe";
+  if (activeTab === "OHLC") panelHint = "  [/]:pair  -/+:timeframe  /:search";
   else if (activeTab === "LOB") panelHint = "  [/]:pair";
-  else if (activeTab === "NEWS") panelHint = "  click:read  search:filter";
+  else if (activeTab === "NEWS") panelHint = "  j/k:nav  Enter:open  Esc:close";
 
   return (
     <div style={s.root}>
@@ -125,18 +171,27 @@ const App: React.FC = () => {
       <div style={s.topBar}>
         <span style={s.brand}>NOTBBG</span>
         <span style={s.brandSub}>TERMINAL</span>
-        {allTabs.map((tab) => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
-            style={{ ...s.tab, ...(tab === activeTab ? s.tabActive : {}) }}>
-            {tab}
-          </button>
-        ))}
+        <button onClick={() => scrollTabs(-1)} title="Scroll tabs left" style={s.tabScroll}>◀</button>
+        <div ref={tabStripRef} style={s.tabStrip}>
+          {allTabs.map((tab) => (
+            <button key={tab} ref={tab === activeTab ? activeTabRef : undefined}
+              onClick={() => setActiveTab(tab)}
+              style={{ ...s.tab, ...(tab === activeTab ? s.tabActive : {}) }}>
+              {tab}
+            </button>
+          ))}
+        </div>
+        <button onClick={() => scrollTabs(1)} title="Scroll tabs right" style={s.tabScroll}>▶</button>
         <span style={s.msgs}>{store.msgCount >= 50000 ? "50000+ msgs" : `${store.msgCount} msgs`}</span>
         <span style={s.clock}>{clock}</span>
         <button style={s.pairBtn} onClick={() => setShowPair(true)} title="Phone pairing">📱</button>
         <span style={{ ...s.connDot, background: store.connected ? colors.green : colors.red }} />
         <span style={{ color: store.connected ? colors.green : colors.red, ...s.connText }}>
-          {store.connected ? "0ms" : "OFF"}
+          {store.connected
+            ? store.lastEventAt > 0
+              ? `${Math.max(0, Math.floor((nowTick - store.lastEventAt)))}ms`
+              : "LIVE"
+            : "OFF"}
         </span>
       </div>
 
@@ -157,10 +212,12 @@ const App: React.FC = () => {
 
 const s: Record<string, React.CSSProperties> = {
   root: { display: "flex", flexDirection: "column", height: "100vh", background: colors.bg, fontFamily: fonts.mono, color: colors.white, overflow: "hidden" },
-  topBar: { display: "flex", alignItems: "center", gap: 8, padding: "0 12px", height: 36, background: "#0D0D0D", borderBottom: `1px solid ${colors.border}`, flexShrink: 0 },
-  brand: { fontSize: 16, fontWeight: 900, color: colors.amber, letterSpacing: "0.1em" },
-  brandSub: { fontSize: 9, color: colors.dimText, letterSpacing: "0.15em", marginRight: 12 },
-  tab: { fontFamily: fonts.mono, fontSize: 11, fontWeight: 700, padding: "5px 12px", background: "none", border: `1px solid transparent`, color: colors.dimText, cursor: "pointer", borderRadius: 2 },
+  topBar: { display: "flex", alignItems: "center", gap: 8, padding: "0 12px", height: 36, background: "#0D0D0D", borderBottom: `1px solid ${colors.border}`, flexShrink: 0, minWidth: 0 },
+  brand: { fontSize: 16, fontWeight: 900, color: colors.amber, letterSpacing: "0.1em", flexShrink: 0 },
+  brandSub: { fontSize: 9, color: colors.dimText, letterSpacing: "0.15em", marginRight: 12, flexShrink: 0 },
+  tabStrip: { display: "flex", gap: 4, overflowX: "auto", overflowY: "hidden", flex: 1, minWidth: 0, scrollbarWidth: "none", msOverflowStyle: "none" as any },
+  tabScroll: { fontFamily: fonts.mono, fontSize: 12, fontWeight: 700, padding: "3px 8px", background: "none", border: `1px solid ${colors.border}`, color: colors.dimText, cursor: "pointer", borderRadius: 2, flexShrink: 0 },
+  tab: { fontFamily: fonts.mono, fontSize: 11, fontWeight: 700, padding: "5px 12px", background: "none", border: `1px solid transparent`, color: colors.dimText, cursor: "pointer", borderRadius: 2, flexShrink: 0, whiteSpace: "nowrap" },
   tabActive: { color: colors.amber, borderColor: colors.amber, background: "#1A1200" },
   msgs: { marginLeft: "auto", fontSize: 10, color: colors.dimText, letterSpacing: "0.04em" },
   clock: { fontSize: 12, color: colors.amber, letterSpacing: "0.05em" },

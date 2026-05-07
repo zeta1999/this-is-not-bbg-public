@@ -18,8 +18,12 @@ var (
 	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 )
 
-// Candle represents a single OHLC candle for rendering.
+// Candle represents a single OHLC candle for rendering. Timestamp
+// is the bar's start time — required so the chart can anchor its
+// right edge at "now" instead of "the array tail" (the array tail
+// drifts whenever a backfill chunk arrives after realtime ticks).
 type Candle struct {
+	Timestamp              time.Time
 	Open, High, Low, Close float64
 	Volume                 float64
 }
@@ -135,15 +139,29 @@ func renderOHLCChart(candles []Candle, width, height int, instrument, exchange, 
 		changeStr = fmt.Sprintf("%.2f%%", change)
 	}
 
-	// Smart price formatting.
-	priceStr := formatPrice(last.Close)
+	// Smart price formatting — currency-aware so non-USD instruments
+	// (^N225/JPY, ^FTSE/GBP, ^GDAXI/EUR) don't get a misleading "$".
+	priceStr := formatPriceCcy(last.Close, instrument, exchange)
+
+	// Stale-data hint: if the rightmost known bar is more than one
+	// timeframe behind "now", surface the gap explicitly so the
+	// trader doesn't read a stale candle as "now". The chart's
+	// right edge is anchored to now via alignToNow(); this just
+	// puts the lag in words.
+	staleStr := ""
+	if step := tfDuration(timeframe); step > 0 && !last.Timestamp.IsZero() {
+		lag := time.Since(last.Timestamp)
+		if lag > 2*step {
+			staleStr = "  " + redStyle.Render(fmt.Sprintf("⚠ last bar %s ago", compactDur(lag)))
+		}
+	}
 
 	header := amberStyle.Render(fmt.Sprintf("  %s  %s  %s", instrument, exchange, timeframe))
 	price := priceStyle.Bold(true).Render(fmt.Sprintf("  %s  %s", priceStr, changeStr))
 	candleCount := dimStyle.Render(fmt.Sprintf("  %d candles", len(candles)))
 
 	headerLine := header + tfStr
-	priceLine := price + candleCount
+	priceLine := price + candleCount + staleStr
 
 	chartHeight := height - 4
 	if chartHeight < 3 {
@@ -155,18 +173,38 @@ func renderOHLCChart(candles []Candle, width, height int, instrument, exchange, 
 	if maxCandles < 1 {
 		maxCandles = 1
 	}
-	visible := candles
-	if len(visible) > maxCandles {
-		visible = visible[len(visible)-maxCandles:]
-	}
+
+	// Anchor the right edge to NOW and walk maxCandles slots back
+	// in time, dropping each known candle into the slot whose start
+	// time matches its Timestamp. Missing slots stay empty so the
+	// trader sees the gap-since-now visually rather than an
+	// equally-spaced backfill mirage. The "now" anchor is the
+	// CURRENT bar's start time (floor(now / TF)) — the close of
+	// that bar hasn't happened yet but the open/running high/low
+	// from realtime ticks belong there.
+	visible := alignToNow(candles, timeframe, maxCandles)
 
 	minPrice, maxPrice := math.Inf(1), math.Inf(-1)
 	for _, c := range visible {
+		if c == nil {
+			continue
+		}
 		if c.Low < minPrice {
 			minPrice = c.Low
 		}
 		if c.High > maxPrice {
 			maxPrice = c.High
+		}
+	}
+	if math.IsInf(minPrice, 1) {
+		// No real candles in the visible window — fall back to the
+		// last known bar's price so the axis isn't NaN-blank while
+		// backfill is loading.
+		if len(candles) > 0 {
+			minPrice = candles[len(candles)-1].Low
+			maxPrice = candles[len(candles)-1].High
+		} else {
+			minPrice, maxPrice = 0, 1
 		}
 	}
 
@@ -175,12 +213,12 @@ func renderOHLCChart(candles []Candle, width, height int, instrument, exchange, 
 		priceRange = 1
 	}
 
-	chart := renderCandleChart(visible, chartHeight, minPrice, priceRange)
+	chart := renderAlignedCandleChart(visible, chartHeight, minPrice, priceRange)
 
 	var lines []string
 	for row := 0; row < chartHeight; row++ {
 		priceAtRow := maxPrice - (float64(row)/float64(chartHeight-1))*priceRange
-		label := dimStyle.Render(fmt.Sprintf("%10s", formatPrice(priceAtRow)))
+		label := dimStyle.Render(fmt.Sprintf("%10s", formatPriceCcy(priceAtRow, instrument, exchange)))
 		lines = append(lines, label+" "+chart[row])
 	}
 
@@ -188,17 +226,57 @@ func renderOHLCChart(candles []Candle, width, height int, instrument, exchange, 
 }
 
 func formatPrice(p float64) string {
+	return formatPriceCcy(p, "", "")
+}
+
+// PriceSym returns the right currency prefix for an instrument we
+// know enough about to be honest. USD-quoted crypto pairs and
+// known US indices keep "$"; non-USD indices get the right symbol;
+// otherwise we drop the prefix rather than lie. Exported so the
+// LOB / sanity / trades renderers can opt in incrementally.
+func PriceSym(instrument, exchange string) string {
+	if instrument == "" {
+		return ""
+	}
+	upper := strings.ToUpper(instrument)
+	if strings.HasSuffix(upper, "USDT") || strings.HasSuffix(upper, "USDC") ||
+		strings.HasSuffix(upper, "USD") || strings.HasSuffix(upper, "-USD") ||
+		strings.HasSuffix(upper, "/USD") {
+		return "$"
+	}
+	if strings.EqualFold(exchange, "yahoo") {
+		switch upper {
+		case "^DJI", "^GSPC", "^IXIC", "^RUT", "^VIX", "^TNX":
+			return "$"
+		case "^FTSE":
+			return "£"
+		case "^GDAXI", "^FCHI", "^STOXX50E":
+			return "€"
+		case "^N225", "^TOPX":
+			return "¥"
+		case "^KS11":
+			return "₩"
+		}
+	}
+	return ""
+}
+
+// formatPriceCcy is formatPrice with a currency-aware prefix. Pass
+// empty instrument when the caller doesn't know — the result drops
+// the prefix instead of inventing a "$".
+func formatPriceCcy(p float64, instrument, exchange string) string {
+	sym := PriceSym(instrument, exchange)
 	switch {
 	case p >= 10000:
-		return fmt.Sprintf("$%.0f", p)
+		return fmt.Sprintf("%s%.0f", sym, p)
 	case p >= 100:
-		return fmt.Sprintf("$%.1f", p)
+		return fmt.Sprintf("%s%.1f", sym, p)
 	case p >= 1:
-		return fmt.Sprintf("$%.2f", p)
+		return fmt.Sprintf("%s%.2f", sym, p)
 	case p >= 0.01:
-		return fmt.Sprintf("$%.4f", p)
+		return fmt.Sprintf("%s%.4f", sym, p)
 	default:
-		return fmt.Sprintf("$%.6f", p)
+		return fmt.Sprintf("%s%.6f", sym, p)
 	}
 }
 
@@ -265,7 +343,7 @@ func renderSidebar(entries []OHLCSidebarEntry, width, height int) string {
 
 		priceStr := ""
 		if e.LastPrice > 0 {
-			priceStr = formatPrice(e.LastPrice)
+			priceStr = formatPriceCcy(e.LastPrice, e.Label, e.Exchange)
 		}
 
 		if e.Active {
@@ -305,28 +383,236 @@ func renderSidebar(entries []OHLCSidebarEntry, width, height int) string {
 	return strings.Join(lines[:height], "\n")
 }
 
-func renderCandleChart(candles []Candle, height int, minPrice, priceRange float64) []string {
+// compactDur formats a Duration as a short human string ("3s",
+// "12m", "2h"). Used in the chart header to show how far behind
+// "now" the most recent bar is, so the trader sees the lag.
+func compactDur(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours())/24)
+	}
+}
+
+// tfDuration converts a timeframe string ("1m", "5m", "1h", "1d",
+// "1w") to its duration. Unknown / "spot" returns 0 — caller falls
+// back to even-spacing.
+func tfDuration(tf string) time.Duration {
+	switch tf {
+	case "1m":
+		return 1 * time.Minute
+	case "5m":
+		return 5 * time.Minute
+	case "15m":
+		return 15 * time.Minute
+	case "30m":
+		return 30 * time.Minute
+	case "1h":
+		return 1 * time.Hour
+	case "4h":
+		return 4 * time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "1d":
+		return 24 * time.Hour
+	case "1w":
+		return 7 * 24 * time.Hour
+	}
+	return 0
+}
+
+// alignToNow lays out maxCandles slots from oldest (index 0) to
+// newest (index maxCandles-1, anchored to the current bar's start
+// time). Each slot holds either a pointer to the candle whose
+// Timestamp falls inside that slot or nil for "no data yet". When
+// the timeframe isn't recognised or no candle has a timestamp,
+// degrades to the legacy "right-N candles by array position"
+// layout so the chart still renders.
+//
+// Formal invariants (verified by ohlc_test.go):
+//
+//	I1 (right=now):   slots[maxCandles-1] (when non-nil) has
+//	                  Timestamp.Truncate(step) == now.Truncate(step).
+//	I2 (slot honesty): for every k in [0..maxCandles): if
+//	                   slots[k] != nil then
+//	                   slots[k].Timestamp.Truncate(step) ==
+//	                   leftmost.Add(k * step).
+//	I3 (no phantom):  every input candle either occupies exactly
+//	                  one slot or is out-of-window (dropped). No
+//	                  duplication, no synthetic candles.
+//	I4 (gap honesty): nil at slots[k] means "no candle exists for
+//	                  bar k", NEVER "we have data but hid it".
+func alignToNow(candles []Candle, timeframe string, maxCandles int) []*Candle {
+	step := tfDuration(timeframe)
+	out := make([]*Candle, maxCandles)
+
+	// Degraded mode: no real timestamps anywhere — fall back to
+	// array-tail. Trader sees something instead of an empty chart;
+	// honesty is preserved because the indicator above will tell
+	// them backfill is loading.
+	hasTime := false
+	for _, c := range candles {
+		if !c.Timestamp.IsZero() {
+			hasTime = true
+			break
+		}
+	}
+	if !hasTime || step == 0 {
+		start := 0
+		if len(candles) > maxCandles {
+			start = len(candles) - maxCandles
+		}
+		for i := start; i < len(candles); i++ {
+			c := candles[i]
+			out[maxCandles-(len(candles)-i)] = &c
+		}
+		return out
+	}
+
+	// Right-edge slot is the bar that contains "now" — open bar
+	// for the current TF. Each slot to the left is one TF earlier.
+	now := time.Now().UTC()
+	rightStart := now.Truncate(step)
+	// Map slot index (0..maxCandles-1, 0 = oldest, last = now) to
+	// a target start time.
+	slotStart := func(slot int) time.Time {
+		offsetFromRight := (maxCandles - 1 - slot)
+		return rightStart.Add(-time.Duration(offsetFromRight) * step)
+	}
+
+	// Walk candles oldest→newest and place timestamped ones into
+	// their time slots. Candles with zero Timestamp are DROPPED —
+	// a candle without a timestamp is useless to a trader (you
+	// can't reason about a price level without knowing when it
+	// happened), so we refuse to render it. The upstream feed/
+	// gateway must populate Timestamp; if it doesn't, the gap is
+	// honest and the operator knows to fix the source.
+	leftmost := slotStart(0)
+	rightmost := rightStart
+	dropped := 0
+	zeroTs := 0
+	beforeLeft := 0
+	afterRight := 0
+	placed := 0
+	for i := range candles {
+		ts := candles[i].Timestamp
+		if ts.IsZero() {
+			zeroTs++
+			dropped++
+			continue
+		}
+		bar := ts.Truncate(step)
+		if bar.Before(leftmost) {
+			beforeLeft++
+			dropped++
+			continue
+		}
+		if bar.After(rightmost) {
+			afterRight++
+			dropped++
+			continue
+		}
+		slotsFromRight := int(rightmost.Sub(bar) / step)
+		slot := maxCandles - 1 - slotsFromRight
+		if slot >= 0 && slot < maxCandles {
+			c := candles[i]
+			out[slot] = &c
+			placed++
+		}
+	}
+	if alignDebug != nil {
+		alignDebug("ALIGN tf=%s in=%d slots=%d placed=%d drop=%d (zero=%d before=%d after=%d) win=[%s..%s]",
+			timeframe, len(candles), maxCandles, placed, dropped,
+			zeroTs, beforeLeft, afterRight,
+			leftmost.Format("01-02 15:04:05"),
+			rightmost.Format("01-02 15:04:05"))
+	}
+
+	return out
+}
+
+// alignDebug, when non-nil, is called by alignToNow with one
+// summary line per render. The TUI app wires this to the same
+// /tmp/notbbg-ohlc.log file the realtime + history paths use, so
+// the operator can correlate "in=10000 placed=2" against the
+// chunk/realtime traces above. Lives in views (not app) because
+// alignToNow is in this package; setter exposed below for the app
+// package to call without a circular import.
+var alignDebug func(format string, args ...any)
+
+// SetAlignDebug installs (or clears, with nil) the trace hook used
+// by alignToNow. Idempotent — safe to call from main / tests.
+func SetAlignDebug(fn func(format string, args ...any)) {
+	alignDebug = fn
+}
+
+// renderAlignedCandleChart renders candles from the slot-aligned
+// `[]*Candle` produced by alignToNow. Empty slots render as blank
+// columns so missing-data gaps are visible.
+//
+// Shape invariants (the trader-sees-now of vertical layout):
+//
+//	S1 (preservation):    rendering uses Open/High/Low/Close
+//	                      verbatim — no smoothing, no synthesis.
+//	S2 (visibility):      every non-nil slot renders >= 1 body row,
+//	                      even a doji (O==C) or a body whose
+//	                      magnitude is below one-row resolution.
+//	                      Without this, sub-row bodies disappear
+//	                      and the trader sees a wick-only marker
+//	                      where a real bar exists.
+//	S3 (proportionality): body row count ≈ |O-C|/priceRange *
+//	                      chartHeight ± 1; wick rows ≈ (H-L)/
+//	                      priceRange * chartHeight ± 1. Holds by
+//	                      construction of the row→price mapping.
+//	S4 (color):           bullish (C >= O) → green, bearish → red,
+//	                      both body and wick.
+func renderAlignedCandleChart(slots []*Candle, height int, minPrice, priceRange float64) []string {
 	rows := make([]string, height)
 	for i := range rows {
 		rows[i] = ""
 	}
-
-	for _, c := range candles {
+	if height < 2 {
+		return rows
+	}
+	// Half-row in price units. A body whose top/bottom both fall
+	// inside the same row would otherwise be invisible due to the
+	// `priceAtRow <= bodyTop && priceAtRow >= bodyBot` collapsing
+	// to a single price-point match. Expanding the body bounds by
+	// half a row in each direction guarantees S2 (visibility):
+	// every body covers at least one row, with no over-extension
+	// past the actual O-C range as seen by the human eye (a bar
+	// occupying exactly one row IS exactly one row tall).
+	rowSpan := priceRange / float64(height-1)
+	halfRow := rowSpan / 2
+	for _, c := range slots {
+		if c == nil {
+			for row := 0; row < height; row++ {
+				rows[row] += "  " // blank slot
+			}
+			continue
+		}
 		bodyTop := math.Max(c.Open, c.Close)
 		bodyBot := math.Min(c.Open, c.Close)
-
+		// Expand to guarantee at least one row of body coverage.
+		bodyTopRender := bodyTop + halfRow
+		bodyBotRender := bodyBot - halfRow
 		bullish := c.Close >= c.Open
 		style := redStyle
 		if bullish {
 			style = greenStyle
 		}
-
 		for row := 0; row < height; row++ {
 			priceAtRow := (minPrice + priceRange) - (float64(row)/float64(height-1))*priceRange
-
-			inWick := priceAtRow <= c.High && priceAtRow >= c.Low
-			inBody := priceAtRow <= bodyTop && priceAtRow >= bodyBot
-
+			inWick := priceAtRow <= c.High+halfRow && priceAtRow >= c.Low-halfRow
+			inBody := priceAtRow <= bodyTopRender && priceAtRow >= bodyBotRender
 			if inBody {
 				if bullish {
 					rows[row] += style.Render("█")
@@ -338,9 +624,8 @@ func renderCandleChart(candles []Candle, height int, minPrice, priceRange float6
 			} else {
 				rows[row] += " "
 			}
-			rows[row] += " " // spacing between candles
+			rows[row] += " "
 		}
 	}
-
 	return rows
 }

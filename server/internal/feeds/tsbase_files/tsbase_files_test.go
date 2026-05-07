@@ -108,17 +108,21 @@ func TestConsumeJSONL_HandlesRotation(t *testing.T) {
 	}
 }
 
-func TestConsumeParquet_SkippedWithWarning(t *testing.T) {
+func TestConsumeParquet_SkipsMalformed(t *testing.T) {
+	// Non-parquet bytes with a .parquet extension: the reader
+	// returns immediately (fails to parse magic), the tailer
+	// continues without publishing anything.
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "trades.parquet"), "ignored")
+	writeFile(t, filepath.Join(root, "trades.parquet"), "not a parquet file")
 
 	b := bus.New(8)
 	tl := New(b, Config{Path: root})
 	if err := tl.scanOnce(context.Background()); err != nil {
-		t.Fatal(err)
+		// Malformed files are logged + skipped, not errored.
+		t.Fatalf("scan error: %v", err)
 	}
 	if tl.Rows() != 0 {
-		t.Errorf("parquet should not publish rows, got %d", tl.Rows())
+		t.Errorf("malformed parquet should not publish rows, got %d", tl.Rows())
 	}
 }
 

@@ -1,0 +1,11 @@
+name: hello-rs
+command: ./hello-rs
+args: []
+input_topics:
+  - "ohlc.binance.*"
+output_topics:
+  - "plugin.hello-rs.screen"
+screens:
+  - id: "HELLORS"
+    label: "Hello Rust"
+    icon: "rocket-outline"

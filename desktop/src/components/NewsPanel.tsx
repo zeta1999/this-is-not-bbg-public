@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { colors, fonts, panelStyle } from "../styles/theme";
 import type { NewsItem } from "../store";
 
@@ -9,6 +9,7 @@ interface Props {
 export const NewsPanel: React.FC<Props> = ({ items }) => {
   const [search, setSearch] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(-1);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const [serverResults, setServerResults] = useState<NewsItem[]>([]);
 
@@ -55,11 +56,58 @@ export const NewsPanel: React.FC<Props> = ({ items }) => {
 
   const selected = selectedIdx >= 0 && selectedIdx < filtered.length ? filtered[selectedIdx] : null;
 
+  // Keyboard nav — TUI parity:
+  //   j/↓ next, k/↑ prev, Enter open, Esc close article / clear search
+  //   Panel-scoped; ignores events when typing in inputs.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        if (e.key === "Escape") {
+          (e.target as HTMLInputElement).blur();
+        }
+        return;
+      }
+      if (selected) {
+        if (e.key === "Escape" || e.key === "Backspace") {
+          e.preventDefault();
+          setSelectedIdx(-1);
+        }
+        return;
+      }
+      if (filtered.length === 0) return;
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIdx((i) => (i < 0 ? 0 : Math.min(i + 1, filtered.length - 1)));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIdx((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter" && selectedIdx >= 0) {
+        e.preventDefault();
+        // Already valid — the render path re-reads `selected`.
+      } else if (e.key === "Escape" && search) {
+        e.preventDefault();
+        setSearch("");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [filtered, selected, selectedIdx, search]);
+
+  // Scroll the selected row into view when selection moves via keyboard.
+  useEffect(() => {
+    if (selectedIdx < 0 || !listRef.current) return;
+    const row = listRef.current.children[selectedIdx + (filtered.length === 0 ? 1 : 0)];
+    if (row && "scrollIntoView" in row) {
+      (row as HTMLElement).scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedIdx, filtered.length]);
+
   if (selected) {
     return (
       <div style={{ ...panelStyle, display: "flex", flexDirection: "column", padding: 0 }}>
         <div style={styles.header}>
-          <button style={styles.backBtn} onClick={() => setSelectedIdx(-1)}>← Back</button>
+          <button style={styles.backBtn} onClick={() => setSelectedIdx(-1)}>← Back (Esc)</button>
           <span style={styles.label}>ARTICLE</span>
         </div>
         <div style={styles.article}>
@@ -68,7 +116,11 @@ export const NewsPanel: React.FC<Props> = ({ items }) => {
             <span style={styles.source}>{selected.source}</span>
             {selected.tickers.map((t) => <span key={t} style={styles.ticker}>{t}</span>)}
           </div>
-          {selected.url && <div style={styles.articleUrl}>{selected.url}</div>}
+          {selected.url && (
+            <div style={styles.articleUrl}>
+              <a href={selected.url} target="_blank" rel="noopener noreferrer" style={styles.articleLink}>{selected.url} ↗</a>
+            </div>
+          )}
           <div style={styles.articleBody}>{selected.body || "(no body)"}</div>
         </div>
       </div>
@@ -84,13 +136,15 @@ export const NewsPanel: React.FC<Props> = ({ items }) => {
           onChange={(e) => { setSearch(e.target.value); setSelectedIdx(-1); }}
           style={styles.searchInput} />
       </div>
-      <div style={styles.list}>
+      <div ref={listRef} style={styles.list}>
         {filtered.length === 0 && <div style={styles.empty}>Waiting for news...</div>}
         {filtered.map((item, i) => {
           const ago = Math.floor((Date.now() / 1000 - item.timestamp) / 60);
           const agoStr = ago < 60 ? `${ago}m` : `${Math.floor(ago / 60)}h`;
+          const isHighlighted = i === selectedIdx;
           return (
-            <div key={i} onClick={() => setSelectedIdx(i)} style={styles.row}>
+            <div key={i} onClick={() => setSelectedIdx(i)}
+              style={{ ...styles.row, ...(isHighlighted ? styles.rowActive : {}) }}>
               <span style={styles.source}>{item.source}</span>
               <span style={styles.time}>{agoStr}</span>
               <span style={styles.title}>{item.title}</span>
@@ -112,6 +166,8 @@ const styles: Record<string, React.CSSProperties> = {
   list: { flex: 1, overflow: "auto" },
   empty: { padding: 16, color: colors.dimText, fontFamily: fonts.mono, fontSize: 12 },
   row: { display: "flex", alignItems: "center", gap: 8, padding: "5px 12px", borderBottom: `1px solid ${colors.border}`, fontFamily: fonts.mono, fontSize: 11, cursor: "pointer" },
+  rowActive: { background: "#1A1200", borderLeft: `2px solid ${colors.amber}`, paddingLeft: 10 },
+  articleLink: { color: "#4488FF", textDecoration: "none" },
   source: { color: "#4488FF", fontWeight: 700, minWidth: 100, fontSize: 11 },
   time: { color: colors.dimText, minWidth: 35, fontSize: 10 },
   title: { color: colors.white, flex: 1 },

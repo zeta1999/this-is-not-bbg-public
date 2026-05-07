@@ -34,7 +34,7 @@ func (f *fakeBackfiller) BackfillHistorical(ctx context.Context, req feeds.Backf
 
 func TestRequest_DispatchesRecordsAndProgress(t *testing.T) {
 	b := bus.New(64)
-	sub := b.Subscribe(32, "ohlc.*.*", "backfill.progress")
+	sub := b.Subscribe(32, "ohlc.*.*", "ohlc-historical.*.*", "backfill.progress")
 	defer b.Unsubscribe(sub)
 
 	fake := &fakeBackfiller{result: []feeds.OHLC{
@@ -66,7 +66,15 @@ func TestRequest_DispatchesRecordsAndProgress(t *testing.T) {
 			case "backfill.progress":
 				progress = append(progress, m.Payload.(Progress))
 			default:
-				if m.Topic[:5] == "ohlc." {
+				// Historical replays land on the dedicated
+				// `ohlc-historical.*` prefix now (live consumer
+				// safety). The legacy `ohlc.*` prefix is reserved
+				// for live ticks. Test counts both for back-compat
+				// in case the policy flips again.
+				if len(m.Topic) >= 5 && (m.Topic[:5] == "ohlc.") {
+					ohlcs++
+				}
+				if len(m.Topic) >= 16 && m.Topic[:16] == "ohlc-historical." {
 					ohlcs++
 				}
 			}

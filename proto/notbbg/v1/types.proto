@@ -5,8 +5,16 @@ package notbbg.v1;
 option go_package = "github.com/notbbg/notbbg/server/pkg/protocol";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
 
 // Canonical OHLC candlestick data.
+//
+// double fields keep the fast-math path (charts, indicators).
+// _decimal counterparts carry the exchange-committed string —
+// REQUIRED for crypto where adapter rounding can drift cents
+// (decision 2026-04-24, captured in feedback_decimal_required.md).
+// Adapters populate decimals from the raw json.Number; consumers
+// needing exact fidelity (backtester, audit, OMS) prefer them.
 message OHLC {
   string instrument = 1;   // e.g. "BTCUSD"
   string exchange   = 2;   // e.g. "binance"
@@ -17,12 +25,20 @@ message OHLC {
   double low    = 7;
   double close  = 8;
   double volume = 9;
+  string open_decimal   = 10;
+  string high_decimal   = 11;
+  string low_decimal    = 12;
+  string close_decimal  = 13;
+  string volume_decimal = 14;
 }
 
 // Single price level in an order book.
 message PriceLevel {
   double price    = 1;
   double quantity = 2;
+  uint32 order_count = 3;  // populated where venue exposes (e.g. Bybit); zero otherwise
+  string price_decimal    = 4;  // exchange-committed string (see OHLC above)
+  string quantity_decimal = 5;
 }
 
 // Snapshot of a limit order book.
@@ -44,6 +60,8 @@ message Trade {
   double quantity = 5;
   Side   side     = 6;
   string trade_id = 7;
+  string price_decimal    = 8;  // exchange-committed string (see OHLC above)
+  string quantity_decimal = 9;
 }
 
 enum Side {
@@ -155,4 +173,83 @@ message Update {
     Alert       alert       = 14;
     FeedStatus  feed_status = 15;
   }
+}
+
+// ---------------------------------------------------------------------
+// U1 schema additions (2026-04-25): typed payloads for previously
+// untyped bus.Message values. The Go bus.Message.Payload field stays
+// `any` for now to keep blast radius small, but new payloads SHOULD
+// land here so the conformance corpus (U5) can exercise them and the
+// eventual `Payload proto.Message` tightening becomes mechanical.
+// ---------------------------------------------------------------------
+
+// Aggregated trade activity over a window. Replaces the ad-hoc
+// map[string]any payload TUI/desktop saw on `trade.agg.<exchange>.<symbol>`.
+message TradeAgg {
+  string instrument = 1;
+  string exchange   = 2;
+  google.protobuf.Timestamp window_start = 3;
+  google.protobuf.Timestamp window_end   = 4;
+  uint64 count      = 5;   // number of trades in the window
+  double volume     = 6;   // sum of quantities
+  double notional   = 7;   // sum of (price * quantity)
+  double vwap       = 8;   // notional / volume (when volume > 0)
+  uint64 buy_count  = 9;
+  uint64 sell_count = 10;
+  // Side bias in [-1, 1]; positive = more buy-side notional.
+  double side_bias  = 11;
+}
+
+// One-shot snapshot of the most recent trades for a topic; used for
+// late-joining-client warmup so the trades panel isn't empty until
+// the next live trade arrives.
+message TradeSnap {
+  string instrument = 1;
+  string exchange   = 2;
+  google.protobuf.Timestamp generated_at = 3;
+  repeated Trade trades = 4;
+}
+
+// Single row of the cross-venue price-sanity matrix. Replaces the
+// per-row map[string]any the SANITY tab consumes.
+message SanityRow {
+  string pair        = 1;   // e.g. "BTCUSDT"
+  double median_price = 2;
+  double max_dev_bp  = 3;   // max venue deviation in basis points
+  google.protobuf.Timestamp updated_at = 4;
+  // Per-venue breakdown: { exchange -> price }.
+  map<string, double> prices = 5;
+}
+
+// Snapshot of the entire sanity matrix; published on `sanity.prices`
+// at a slow cadence (so the SANITY tab can re-render in one frame).
+message SanitySnapshot {
+  google.protobuf.Timestamp generated_at = 1;
+  repeated SanityRow rows = 2;
+}
+
+// Plugin liveness status. Published on `plugin.status` every ~10 s.
+// The Go plugins.computePluginState function emits this shape.
+message PluginStatus {
+  string name          = 1;
+  string state         = 2;  // "connected" | "stale" | "error" | "stopped"
+  google.protobuf.Timestamp last_activity = 3;
+  int32  pid           = 4;
+  uint64 error_count   = 5;
+  bool   running       = 6;
+}
+
+// GenericRow carries free-form rows from sources whose schema isn't
+// stable enough to bind to a strongly-typed proto today (Sibelius
+// tsbase_files, Ravel adapter, ad-hoc CSV ingest). The `payload`
+// field uses google.protobuf.Struct so existing JSON-blob-style
+// publishers don't have to upgrade in lockstep with the U1 work.
+//
+// New publishers SHOULD prefer a proper proto. GenericRow is the
+// escape hatch, not the recommendation.
+message GenericRow {
+  string source = 1;   // e.g. "sibelius", "ravel", "tsbase_files"
+  string kind   = 2;   // source-defined row kind, e.g. "voltools.snap"
+  google.protobuf.Timestamp observed_at = 3;
+  google.protobuf.Struct payload = 4;
 }

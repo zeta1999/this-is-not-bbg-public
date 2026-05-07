@@ -59,6 +59,17 @@ func main() {
 	}
 
 	rootCmd.Flags().StringVarP(&socketPath, "socket", "s", "", "server socket path (default: auto-detect)")
+
+	// --home is persistent so every subcommand (plugin list, agent,
+	// news, etc.) resolves paths through the same override. Must be
+	// applied before any subcommand runs; PersistentPreRun gates all.
+	var homeOverride string
+	rootCmd.PersistentFlags().StringVar(&homeOverride, "home", "", "override notbbg home dir (default: $XDG_CONFIG_HOME/notbbg or ~/.config/notbbg)")
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if homeOverride != "" {
+			tuiconfig.SetHomeOverride(homeOverride)
+		}
+	}
 	rootCmd.AddCommand(commands.NewExportCmd())
 	rootCmd.AddCommand(commands.NewPluginCmd())
 	rootCmd.AddCommand(commands.NewNewsCmd())
@@ -77,6 +88,9 @@ var subscribePatterns = []string{
 	"news", "alert", "feed.status",
 	"system.health", "indicator.*",
 	"plugin.*", "plugin.*.*",
+	"server.log",
+	"bus.stats", "wal.cache.stats", "wal.datalake.stats",
+	"sanity.prices",
 }
 
 func runTUI(socketPath, collectorAddr, collectorToken string) error {
@@ -163,6 +177,22 @@ func connectionLoop(ctx context.Context, socketPath string, sm *client.ServerMan
 
 		app.SendFrame = func(data []byte) {
 			_ = conn.WriteFrame(data)
+		}
+
+		// U8 handshake: send ClientHello before any other frame so the
+		// server can refuse on a major-version mismatch and the TUI
+		// reports a clear status message instead of failing later
+		// requests with cryptic errors.
+		helloMsg, _ := json.Marshal(map[string]any{
+			"type":        "client_hello",
+			"client_name": "tui",
+			"major":       1,
+			"minor":       0,
+		})
+		if err := conn.WriteFrame(helloMsg); err != nil {
+			conn.Close()
+			sendStatus(statusCh, "disconnected")
+			continue
 		}
 
 		subMsg, _ := json.Marshal(map[string]any{

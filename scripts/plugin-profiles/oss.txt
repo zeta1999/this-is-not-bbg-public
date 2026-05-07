@@ -1,0 +1,25 @@
+# oss.txt — minimal OSS-release plugin set. Purposefully smaller than
+# reduced.txt: only the SDK-demo and self-contained example plugins
+# whose code lives entirely under examples/plugins/<name>/ with no
+# upstream-only dependencies. Anything depending on private mirrors
+# (bt-engine / Sibelius / Ravel internals) stays out.
+#
+# Trimmed to the four that exercise distinct surfaces of the SDK:
+#   - hello-world         SDK-demo (Go) — proves the bare loader path
+#   - formula-demo        live input + output cells
+#   - monitor             server-side telemetry cell stream
+#   - ohlc-png            image-cell path (matplotlib PNG render)
+#   - formulettes-runner  C++ pricing CLI — vendored Sibelius/formulettes,
+#                         no upstream dep so first-launch can compile it.
+#
+# Dropped from the previous list:
+#   - hello-rs            redundant with hello-world (same demo, Rust)
+#
+# Deploy with:
+#   make plugins-oss
+#   # or: ./scripts/deploy-plugins.sh --profile oss --replace
+hello-world
+formula-demo
+monitor
+ohlc-png
+formulettes-runner

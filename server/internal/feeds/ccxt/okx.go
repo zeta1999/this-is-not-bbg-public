@@ -194,6 +194,11 @@ func (a *OKXAdapter) handleCandle(symbol string, data json.RawMessage) {
 			Instrument: symbol, Exchange: "okx", Timeframe: "1m",
 			Timestamp: time.UnixMilli(ts),
 			Open: open, High: high, Low: low, Close: close_, Volume: vol,
+			OpenDecimal:   candle[1].String(),
+			HighDecimal:   candle[2].String(),
+			LowDecimal:    candle[3].String(),
+			CloseDecimal:  candle[4].String(),
+			VolumeDecimal: candle[5].String(),
 		},
 	})
 }
@@ -219,7 +224,9 @@ func (a *OKXAdapter) handleTrade(symbol string, data json.RawMessage) {
 			Instrument: symbol, Exchange: "okx",
 			Timestamp: time.UnixMilli(ts),
 			Price: price, Quantity: qty, Side: t.Side,
-			TradeID: t.TradeID,
+			TradeID:         t.TradeID,
+			PriceDecimal:    t.Px.String(),
+			QuantityDecimal: t.Sz.String(),
 		},
 	})
 }
@@ -238,14 +245,26 @@ func (a *OKXAdapter) handleBook(symbol string, data json.RawMessage) {
 		if len(b) < 2 { continue }
 		p, _ := b[0].Float64()
 		q, _ := b[1].Float64()
-		bids = append(bids, feeds.LOBLevel{Price: p, Quantity: q})
+		var n uint32
+		if len(b) >= 4 {
+			if v, err := strconv.ParseUint(b[3].String(), 10, 32); err == nil {
+				n = uint32(v)
+			}
+		}
+		bids = append(bids, feeds.LOBLevel{Price: p, Quantity: q, OrderCount: n, PriceDecimal: b[0].String(), QuantityDecimal: b[1].String()})
 	}
 	asks := make([]feeds.LOBLevel, 0, len(book.Asks))
 	for _, a_ := range book.Asks {
 		if len(a_) < 2 { continue }
 		p, _ := a_[0].Float64()
 		q, _ := a_[1].Float64()
-		asks = append(asks, feeds.LOBLevel{Price: p, Quantity: q})
+		var n uint32
+		if len(a_) >= 4 {
+			if v, err := strconv.ParseUint(a_[3].String(), 10, 32); err == nil {
+				n = uint32(v)
+			}
+		}
+		asks = append(asks, feeds.LOBLevel{Price: p, Quantity: q, OrderCount: n, PriceDecimal: a_[0].String(), QuantityDecimal: a_[1].String()})
 	}
 
 	a.bus.Publish(bus.Message{
@@ -272,10 +291,13 @@ func (a *OKXAdapter) handleFunding(symbol string, data json.RawMessage) {
 
 	a.bus.Publish(bus.Message{
 		Topic: fmt.Sprintf("perp.okx.%s", symbol),
-		Payload: map[string]any{
-			"Instrument": symbol, "Exchange": "okx", "Type": "funding",
-			"FundingRate": rate, "NextFundingRate": nextRate,
-			"Timestamp": time.UnixMilli(ts),
+		Payload: feeds.PerpetualSnapshot{
+			Instrument:      symbol,
+			Exchange:        "okx",
+			Timestamp:       time.UnixMilli(ts),
+			FundingRate:     rate,
+			NextFundingRate: nextRate,
+			NextFundingTime: ts,
 		},
 	})
 }

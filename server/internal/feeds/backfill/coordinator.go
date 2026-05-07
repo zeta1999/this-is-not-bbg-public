@@ -193,11 +193,15 @@ func (c *Coordinator) Request(ctx context.Context, feed string, req feeds.Backfi
 	}
 	j.records = records
 
-	// Dispatch records onto the bus so cache + datalake capture for
-	// free. Clients also see them via any live subscription.
+	// Dispatch records on the dedicated historical topic prefix so
+	// cache + datalake still capture them but live consumers
+	// (sanity / alerts / consistency / TUI+desktop SSE) don't see
+	// year-old klines as fresh ticks. Datalake normalizes the topic
+	// on the way to disk so DataRange queries against `ohlc.*.*`
+	// still find these.
 	for _, o := range records {
 		c.bus.Publish(bus.Message{
-			Topic:   fmt.Sprintf("ohlc.%s.%s", o.Exchange, o.Instrument),
+			Topic:   fmt.Sprintf("ohlc-historical.%s.%s", o.Exchange, o.Instrument),
 			Payload: o,
 		})
 	}

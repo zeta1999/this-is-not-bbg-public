@@ -1,0 +1,9 @@
+# reduced.txt — minimal plugin set for the OSS / lightweight cut.
+# Anything outside this list stays out of ~/.config/notbbg/plugins
+# when deploying with `--profile reduced`. Confirmed scope from the
+# 2026-04-28 GUI brief (formulettes + backtester + monitor + the
+# formula demo for plumbing tests).
+formulettes-runner
+backtester
+monitor
+formula-demo

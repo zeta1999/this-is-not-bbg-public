@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 )
 
 // StyledLine is a single line of styled text for screen rendering.
@@ -32,10 +33,17 @@ type Message struct {
 }
 
 // Plugin provides helpers for reading input messages and writing screen updates.
+//
+// All writer methods (UpdateScreen / UpdateCellGrid / Publish) are
+// safe to call concurrently — they share an internal mutex so a
+// background heartbeat goroutine and the main p.Run handler can
+// emit without interleaving JSON frames on stdout.
 type Plugin struct {
 	screenTopic string
 	enc         *json.Encoder
 	scanner     *bufio.Scanner
+
+	writeMu sync.Mutex
 }
 
 // New creates a plugin that reads from stdin and writes to stdout.
@@ -68,6 +76,8 @@ func (p *Plugin) Read() (Message, error) {
 // UpdateScreen publishes a screen update to stdout.
 func (p *Plugin) UpdateScreen(screenID string, lines []StyledLine) {
 	payload, _ := json.Marshal(ScreenUpdate{ScreenID: screenID, Lines: lines})
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
 	p.enc.Encode(map[string]any{
 		"Topic":   p.screenTopic,
 		"Payload": json.RawMessage(payload),
@@ -76,6 +86,8 @@ func (p *Plugin) UpdateScreen(screenID string, lines []StyledLine) {
 
 // Publish sends a raw message to stdout for the server to publish on the bus.
 func (p *Plugin) Publish(topic string, payload any) {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
 	p.enc.Encode(map[string]any{
 		"Topic":   topic,
 		"Payload": payload,
@@ -97,4 +109,17 @@ func (p *Plugin) Run(handler func(msg Message)) {
 // ParsePayload unmarshals a Message's Payload into the given target.
 func ParsePayload(msg Message, target any) error {
 	return json.Unmarshal(msg.Payload, target)
+}
+
+// AsInputEvent decodes a Message into an InputEvent. Returns ok=false
+// when the message didn't come from the plugin's `.input` topic or
+// the payload doesn't parse as an InputEvent. Zero-value Kind means
+// "edit" (cell update) — use `event.IsCancel()` to detect cancel
+// events; Value / Address are populated on edits only.
+func AsInputEvent(msg Message) (InputEvent, bool) {
+	var ev InputEvent
+	if err := json.Unmarshal(msg.Payload, &ev); err != nil {
+		return InputEvent{}, false
+	}
+	return ev, true
 }

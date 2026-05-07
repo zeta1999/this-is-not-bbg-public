@@ -1,0 +1,2 @@
+{"instrument":"BTCUSDT","exchange":"binance","timestamp":"2026-04-25T12:00:00.123Z","price":65000.5,"quantity":0.123,"side":"SIDE_BUY","tradeId":"42","priceDecimal":"65000.50","quantityDecimal":"0.123"}
+{"instrument":"BTCUSDT","exchange":"bybit","timestamp":"2026-04-25T12:00:01Z","price":64999.75,"quantity":0.05,"side":"SIDE_SELL","tradeId":"abc"}

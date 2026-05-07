@@ -43,7 +43,12 @@ type TradeViewData struct {
 }
 
 // RenderTrades renders the trade aggregate + recent trades view.
-func RenderTrades(data map[string]*TradeViewData, keys []string, activeIdx int, width, height int) string {
+// `filter` is a multi-token query (whitespace-separated) that
+// narrows the sidebar — empty means show every key. Matches against
+// instrument, exchange, and the raw key. The right pane always
+// reflects keys[activeIdx], so the active selection is visible even
+// when filtered out of the sidebar (consistent with OHLC/LOB).
+func RenderTrades(data map[string]*TradeViewData, keys []string, activeIdx int, filter string, width, height int) string {
 	header := amberStyle.Render("  TRADES")
 
 	if len(keys) == 0 || len(data) == 0 {
@@ -54,8 +59,13 @@ func RenderTrades(data map[string]*TradeViewData, keys []string, activeIdx int, 
 	var sidebar []string
 	for i, key := range keys {
 		label := key // "exchange/instrument"
+		instr, ex := "", ""
 		if d, ok := data[key]; ok && d.Agg != nil {
-			label = fmt.Sprintf("%s/%s", d.Agg.Instrument, d.Agg.Exchange)
+			instr, ex = d.Agg.Instrument, d.Agg.Exchange
+			label = fmt.Sprintf("%s/%s", instr, ex)
+		}
+		if filter != "" && !MatchesTokenQuery(filter, key, instr, ex) {
+			continue
 		}
 		if i == activeIdx {
 			sidebar = append(sidebar, amberStyle.Bold(true).Render(" ▸ "+label))

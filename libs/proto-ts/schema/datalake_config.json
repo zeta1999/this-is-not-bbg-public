@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/datalake-config",
+  "$ref": "#/$defs/DatalakeConfig",
+  "$defs": {
+    "DatalakeConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "format": {
+          "type": "string"
+        },
+        "rotation": {
+          "type": "string"
+        },
+        "compression": {
+          "type": "string"
+        },
+        "compress_topics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "path",
+        "topics",
+        "format",
+        "rotation"
+      ]
+    }
+  }
+}

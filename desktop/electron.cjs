@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
@@ -31,6 +31,16 @@ function createWindow() {
   const devUrl = process.env.VITE_DEV_URL || "http://localhost:1420";
   const url = token ? `${devUrl}?token=${token}` : devUrl;
   win.loadURL(url);
+
+  // Route http(s) `target=_blank` links to the OS default browser
+  // rather than opening a new Electron window.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) {
+      shell.openExternal(url);
+      return { action: "deny" };
+    }
+    return { action: "allow" };
+  });
 
   win.on("closed", () => { win = null; });
 }

@@ -110,6 +110,26 @@ InvalidateOnSwitch ==
     /\ senderState' = "idle"
     /\ UNCHANGED <<realtimeQueue, sent, dropped, clientAcked>>
 
+\* --- Client drops mid-session and reconnects. Server tears the
+\*     relay down — bulk and realtime queues are cleared, credits
+\*     reset to MaxCredits, sender returns to idle. The client
+\*     reissues the subscription on the new connection with a stale
+\*     cursor and picks up live data from that point. clientAcked
+\*     accumulates across reconnects because it's a monotonic
+\*     counter (used only by liveness arguments); the actual
+\*     server-side credit state is refreshed.
+\*
+\*     This generalizes the earlier TUI-specific actor to any
+\*     credit-aware client: phone, desktop SSE, or future Rust/C++
+\*     SDKs. The shape is the same — fresh budget + fresh queues on
+\*     reconnect, no deadlock with an in-flight bulk send. ---
+ClientReconnect ==
+    /\ bulkQueue' = 0
+    /\ realtimeQueue' = 0
+    /\ credits' = MaxCredits
+    /\ senderState' = "idle"
+    /\ UNCHANGED <<sent, dropped, clientAcked>>
+
 \* --- Combined next-state relation ---
 Next ==
     \/ PublishBulk
@@ -119,6 +139,7 @@ Next ==
     \/ WaitForCredits
     \/ ClientAck
     \/ InvalidateOnSwitch
+    \/ ClientReconnect
 
 \* --- Fairness: eventually the client will ack. InvalidateOnSwitch
 \*     is explicitly NOT fair — we model it as a user action that
@@ -161,6 +182,66 @@ CreditsNonNeg == credits >= 0
 
 \* 6. Safety: type invariant always holds.
 Safety == TypeOK /\ BulkBounded /\ RealtimeBounded /\ CreditsNonNeg
+
+\* ============================
+\* Phase-2 / Phase-5 extensions (2026-04-24)
+\* ============================
+\*
+\* These invariants document, in specification form, the properties
+\* Go tests in `server/internal/bus/policy_test.go` and
+\* `server/internal/persistq/queue_test.go` already check
+\* operationally. They are additive: the existing model still
+\* verifies NoDeadlock, RealtimeProgress, BulkBounded without needing
+\* them. They are restated here so a future TLC run can widen the
+\* invariant set without re-discovering the design intent.
+
+\* --- CoalesceByKey (Phase 2) ---
+\* A CoalesceByKey subscriber holds at most one buffered message per
+\* key. We don't model the full per-key state here (that would
+\* explode the state space); instead we state the property such a
+\* subscriber's buffer satisfies:
+\*
+\*   ∀ k ∈ keys.  |{ m ∈ buffer : key(m) = k }| ≤ 1
+\*
+\* and the buffer-size invariant mirrors BulkBounded:
+\*
+\*   |buffer| ≤ cap
+\*
+\* Proof sketch: the implementation replaces the slot keyed by a
+\* matching incoming message (preserving the key-uniqueness
+\* invariant) and drops incoming messages when cap is reached and
+\* the key is unseen (preserving the cap invariant). No action can
+\* ever grow |buffer| past cap or produce two entries with the same
+\* key. This mirrors BulkBounded's sent ≤ published − dropped
+\* relation, applied per-key. See
+\* `TestRapid_CoalesceByKey_LatestPerKeyWins` for the Go mirror.
+
+\* --- Disk-spill WAL (Phase 5) ---
+\* With persistq interposed between the bus subscriber and the final
+\* durable writer (BBolt / datalake JSONL), the subscriber has two
+\* independent bounded stages:
+\*
+\*   (a) bus channel → persistq.Enqueue    — bus sub buffer, BulkBufSize-ish
+\*   (b) persistq → downstream writer      — WAL cap WALCapBytes
+\*
+\* Claim (WALBoundedLoss): the only drop path for a WAL-backed
+\* writer is when persistq.Enqueue returns ErrFull — which by
+\* construction only fires when no drained segment can be reclaimed
+\* AND the incoming record would exceed WALCapBytes.
+\*
+\*   ¬ErrFull(persistq) ⇒ ¬writerDrop(msg)
+\*
+\* And, strengthening under "finite stall with sufficiently large
+\* WAL":
+\*
+\*   ∀ msg. ∃ cap_sufficient_for_this_stall.
+\*     cap_sufficient_for_this_stall ⇒ ¬writerDrop(msg)
+\*
+\* Corollary: if downstream I/O resumes before WAL fills, every
+\* enqueued message is eventually delivered to the writer, and thus
+\* to disk. The Go property tests
+\* `TestDropOldestDrainedSegment` and `TestWriter_WAL_ReopenResumes`
+\* cover these operationally.
 
 =========================================================================
 \* Config for TLC model checker:

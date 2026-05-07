@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ScrollView } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ScrollView, Image, Modal } from "react-native";
 import { colors, fonts, spacing, presets } from "../../src/theme";
-import { getServerUrl, getToken, onConnectionChange } from "../../src/connection";
+import { getServerUrl, getToken } from "../../src/connection";
+import { useStore } from "../../src/store";
 
 interface PluginScreen {
   id: string;
@@ -29,6 +30,7 @@ interface PluginCell {
   unit?: string;
   delta?: string;
   col_span?: number;
+  component_id?: string;
 }
 
 const styleToColor: Record<string, string> = {
@@ -47,60 +49,67 @@ function cellColor(name?: string): string {
   return styleToColor[name] || name;
 }
 
+// artifactUri turns a plugin-supplied src (NOTBBG:/abs/path,
+// /abs/path, or http(s)://…) into a URI react-native Image can
+// fetch. Local paths route through the auth-gated server endpoint
+// since the phone has no host filesystem access.
+function artifactUri(src: string | undefined): string {
+  if (!src) return "";
+  if (/^https?:\/\//i.test(src)) return src;
+  const path = src.startsWith("NOTBBG:") ? src.slice("NOTBBG:".length) : src;
+  if (!path.startsWith("/")) return src;
+  const url = getServerUrl();
+  const token = getToken();
+  if (!url || !token) return "";
+  return `${url}/api/v1/artifact?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+}
+
+const ImageCellView: React.FC<{ cell: PluginCell }> = ({ cell }) => {
+  const [zoom, setZoom] = useState(false);
+  const src = (cell as any).src as string | undefined;
+  const alt = (cell as any).alt as string | undefined;
+  const uri = artifactUri(src);
+  if (!uri) {
+    return (
+      <Text style={[s.gridCell, { color: colors.muted }]} numberOfLines={1}>
+        {cell.label ? cell.label + " " : ""}📎 [IMG {alt || "missing"}]
+      </Text>
+    );
+  }
+  const w = (cell as any).width as number | undefined;
+  const h = (cell as any).height as number | undefined;
+  const tw = w && w > 0 ? Math.min(w, 320) : 240;
+  const th = h && h > 0 ? Math.round(tw * (h / (w || tw))) : 120;
+  return (
+    <>
+      <TouchableOpacity onPress={() => setZoom(true)}>
+        <Image
+          source={{ uri }}
+          style={{ width: tw, height: th }}
+          resizeMode="contain"
+          accessibilityLabel={alt}
+        />
+      </TouchableOpacity>
+      <Modal visible={zoom} transparent animationType="fade" onRequestClose={() => setZoom(false)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setZoom(false)}
+          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.9)", alignItems: "center", justifyContent: "center" }}
+        >
+          <Image source={{ uri }} style={{ width: "95%", height: "85%" }} resizeMode="contain" />
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+};
+
 function usePlugins() {
-  const [screens, setScreens] = useState<PluginScreen[]>([]);
-  const [lines, setLines] = useState<Record<string, StyledLine[]>>({});
-  const [cells, setCells] = useState<Record<string, PluginCell[]>>({});
-  const [token, setToken] = useState(getToken());
-
-  useEffect(() => {
-    const unsub = onConnectionChange(() => setToken(getToken()));
-    return unsub;
-  }, []);
-
-  useEffect(() => {
-    if (!token) return;
-    let active = true;
-
-    async function poll() {
-      const url = getServerUrl();
-      while (active) {
-        try {
-          // Fetch registry.
-          const regResp = await fetch(
-            `${url}/api/v1/snapshot?topic=plugin.registry&mode=latest&token=${token}`
-          );
-          const regData = await regResp.json();
-          if (Array.isArray(regData) && regData.length > 0) {
-            const payload = regData[0];
-            if (payload.screens) setScreens(payload.screens);
-          }
-
-          // Fetch screen content for each known plugin.
-          for (const s of screens) {
-            const resp = await fetch(
-              `${url}/api/v1/snapshot?topic=${s.topic}&mode=latest&token=${token}`
-            );
-            const data = await resp.json();
-            if (Array.isArray(data) && data.length > 0) {
-              const payload = data[0];
-              if (payload.version === "cellgrid/v1" && Array.isArray(payload.cells)) {
-                setCells((prev) => ({ ...prev, [s.topic]: payload.cells }));
-              } else if (payload.lines) {
-                setLines((prev) => ({ ...prev, [s.topic]: payload.lines }));
-              }
-            }
-          }
-        } catch {}
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    }
-
-    poll();
-    return () => { active = false; };
-  }, [token, screens.length]);
-
-  return { screens, lines, cells };
+  const { pluginScreens, pluginLines, pluginCells } = useStore();
+  return {
+    screens: pluginScreens,
+    lines: pluginLines as Record<string, StyledLine[]>,
+    cells: pluginCells as Record<string, PluginCell[]>,
+  };
 }
 
 // Render a single cell as text.
@@ -146,28 +155,114 @@ function renderCellText(cell: PluginCell): { text: string; color: string; bold: 
       return { text: `${cell.label || ""} ${val.toFixed(cell.precision || 4)}`, color: colors.green, bold: false };
     }
 
+    case "chart": {
+      // Phone is read-only and has limited vertical space — render
+      // each series as an 8-row block-character sparkline, same
+      // alphabet as the TUI. Multiple series concatenate with a
+      // space between names.
+      const blocks = "▁▂▃▄▅▆▇█";
+      const series = (cell as any).series as { name?: string; values?: number[]; color?: string }[] | undefined;
+      if (!series || series.length === 0) {
+        return { text: `${cell.label || ""} —`, color: colors.muted, bold: false };
+      }
+      const parts = series.map((s) => {
+        const values = s.values || [];
+        if (values.length === 0) return "—";
+        let min = values[0], max = values[0];
+        for (const v of values) { if (v < min) min = v; if (v > max) max = v; }
+        const span = max - min;
+        const spark = values.map((v) => {
+          const idx = span > 0 ? Math.floor(((v - min) / span) * (blocks.length - 1)) : 0;
+          return blocks[idx];
+        }).join("");
+        return s.name ? `${s.name}:${spark}` : spark;
+      });
+      return { text: `${cell.label ? cell.label + " " : ""}${parts.join("  ")}`, color: cellColor("cyan"), bold: false };
+    }
+
+    case "table": {
+      // Flatten the table to "h1 h2 | v1 v2 / v1 v2" so it fits in
+      // a single inline string on mobile. Desktop/TUI render as
+      // proper tables; phone is space-constrained.
+      const cols = (cell as any).columns as { header: string }[] | undefined;
+      const rows = (cell as any).rows as string[][] | undefined;
+      if (!cols || cols.length === 0) return { text: `${cell.label || ""} (empty)`, color: colors.muted, bold: false };
+      const header = cols.map((c) => c.header).join(" ");
+      const body = (rows || []).map((r) => (r || []).join(" ")).join(" / ");
+      return { text: `${cell.label ? cell.label + " " : ""}${header} | ${body}`, color, bold: false };
+    }
+
+    case "image": {
+      // Text-only placeholder on phone — the existing renderer is
+      // a single-line text row, so full-image rendering lives
+      // outside this helper. Phone shows alt + src for visibility.
+      const src = (cell as any).src as string | undefined;
+      const alt = (cell as any).alt as string | undefined;
+      const tag = alt ? `[IMG ${alt}]` : "[IMG]";
+      return { text: `${cell.label ? cell.label + " " : ""}📎 ${tag} ${src || ""}`.trim(), color: cellColor("cyan"), bold: false };
+    }
+
     default:
       return { text: cell.text || "", color, bold };
   }
 }
 
-function CellGridView({ gridCells }: { gridCells: PluginCell[] }) {
-  // Group by row.
-  const rows = new Map<number, PluginCell[]>();
+async function sendPluginCancel(topic: string, jobID: string = "*") {
+  const url = getServerUrl();
+  const token = getToken();
+  if (!url || !token) return;
+  try {
+    await fetch(`${url}/api/v1/plugin/cancel?token=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, job_id: jobID }),
+    });
+  } catch {
+    // ignore — the server either saw the request or we're offline
+  }
+}
+
+function CellGridView({ gridCells, screenTopic }: { gridCells: PluginCell[]; screenTopic?: string }) {
+  // Group by row, deduping by (row, col) — last write wins.
+  // Some plugins emit transiently overlapping addresses during
+  // partial-update batches; rendering both throws React's
+  // "two children with the same key" warning, plus the older
+  // payload visually flickers under the newer one.
+  const cellAt = new Map<string, PluginCell>();
   for (const c of gridCells) {
+    cellAt.set(`${c.address.row}-${c.address.col}`, c);
+  }
+  const rows = new Map<number, PluginCell[]>();
+  for (const c of cellAt.values()) {
     const r = c.address.row;
     if (!rows.has(r)) rows.set(r, []);
     rows.get(r)!.push(c);
   }
   const sortedRows = Array.from(rows.keys()).sort((a, b) => a - b);
 
+  // A running progress cell surfaces a Cancel button up top.
+  const hasRunningJob = gridCells.some(
+    (c) => c.component_id === "progress" && typeof c.value === "number" && c.value > 0 && c.value < 1,
+  );
+
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content}>
+      {hasRunningJob && screenTopic && (
+        <TouchableOpacity
+          onPress={() => sendPluginCancel(screenTopic)}
+          style={s.cancelBtn}
+        >
+          <Text style={s.cancelText}>Cancel running job</Text>
+        </TouchableOpacity>
+      )}
       {sortedRows.map((rowNum) => {
         const rowCells = rows.get(rowNum)!.sort((a, b) => a.address.col - b.address.col);
         return (
           <View key={rowNum} style={s.gridRow}>
             {rowCells.map((c) => {
+              if (c.type === "image") {
+                return <ImageCellView key={`${c.address.row}-${c.address.col}`} cell={c} />;
+              }
               const { text, color, bold } = renderCellText(c);
               return (
                 <Text
@@ -193,6 +288,29 @@ function CellGridView({ gridCells }: { gridCells: PluginCell[] }) {
 export default function PluginsScreen() {
   const { screens, lines, cells } = usePlugins();
   const [activeScreen, setActiveScreen] = useState(0);
+  // Refs to the selector ScrollView + each tab button so chevron
+  // taps can scroll the active tab into view (otherwise installs
+  // with > 4 plugins look like "only four are listed" on phones —
+  // the rest are off-screen, no affordance to find them).
+  const scrollRef = useRef<ScrollView>(null);
+  const tabLayoutsRef = useRef<Record<number, { x: number; w: number }>>({});
+  const scrollWidthRef = useRef<number>(0);
+
+  // When activeScreen changes, scroll the active tab into view
+  // (with some padding so the next tab peeks into frame as a hint
+  // there's more to the right).
+  useEffect(() => {
+    const layout = tabLayoutsRef.current[activeScreen];
+    if (!layout || !scrollRef.current) return;
+    const target = Math.max(0, layout.x - 40);
+    scrollRef.current.scrollTo({ x: target, animated: true });
+  }, [activeScreen]);
+
+  const stepScreen = (delta: number) => {
+    if (!screens.length) return;
+    const next = (activeScreen + delta + screens.length) % screens.length;
+    setActiveScreen(next);
+  };
 
   if (screens.length === 0) {
     return (
@@ -212,26 +330,59 @@ export default function PluginsScreen() {
 
   return (
     <View style={presets.screen}>
-      {/* Plugin selector */}
+      {/* Plugin selector — chevrons + count + horizontally
+          scrollable label list. The chevrons advertise that
+          there's more than fits in the viewport (the original
+          ScrollView-only layout looked like "only four plugins"
+          to operators with > 4 installed). */}
       {screens.length > 1 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.selector}>
-          {screens.map((scr, idx) => (
-            <TouchableOpacity
-              key={scr.id}
-              onPress={() => setActiveScreen(idx)}
-              style={[s.selectorBtn, idx === activeScreen && s.selectorBtnActive]}
-            >
-              <Text style={[s.selectorText, idx === activeScreen && s.selectorTextActive]}>
-                {scr.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <View style={s.selectorRow}>
+          <TouchableOpacity
+            onPress={() => stepScreen(-1)}
+            style={s.chevron}
+            accessibilityLabel="Previous plugin"
+          >
+            <Text style={s.chevronText}>‹</Text>
+          </TouchableOpacity>
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={s.selector}
+            onContentSizeChange={(w) => { scrollWidthRef.current = w; }}
+          >
+            {screens.map((scr, idx) => (
+              <TouchableOpacity
+                key={scr.id}
+                onPress={() => setActiveScreen(idx)}
+                onLayout={(e) => {
+                  const { x, width } = e.nativeEvent.layout;
+                  tabLayoutsRef.current[idx] = { x, w: width };
+                }}
+                style={[s.selectorBtn, idx === activeScreen && s.selectorBtnActive]}
+              >
+                <Text style={[s.selectorText, idx === activeScreen && s.selectorTextActive]}>
+                  {scr.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <Text style={s.count}>
+            {activeScreen + 1}/{screens.length}
+          </Text>
+          <TouchableOpacity
+            onPress={() => stepScreen(1)}
+            style={s.chevron}
+            accessibilityLabel="Next plugin"
+          >
+            <Text style={s.chevronText}>›</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* Screen content: cell grid or legacy lines */}
       {gridCells && gridCells.length > 0 ? (
-        <CellGridView gridCells={gridCells} />
+        <CellGridView gridCells={gridCells} screenTopic={current?.topic} />
       ) : (
         <FlatList
           data={currentLines}
@@ -255,6 +406,21 @@ export default function PluginsScreen() {
 }
 
 const s = StyleSheet.create({
+  cancelBtn: {
+    alignSelf: "flex-end",
+    backgroundColor: colors.red,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: 4,
+    marginBottom: spacing.sm,
+  },
+  cancelText: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#fff",
+    textTransform: "uppercase",
+  },
   empty: { padding: spacing.lg },
   emptyText: {
     fontFamily: fonts.mono,
@@ -263,11 +429,38 @@ const s = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   selector: {
-    flexGrow: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    paddingVertical: spacing.sm,
+  },
+  selectorRow: {
+    flexDirection: "row",
+    alignItems: "center",
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+  },
+  chevron: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chevronText: {
+    fontFamily: fonts.mono,
+    fontWeight: "900",
+    fontSize: 22,
+    color: colors.amber,
+    lineHeight: 24,
+  },
+  count: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.muted,
+    paddingHorizontal: 6,
+    minWidth: 38,
+    textAlign: "center",
   },
   selectorBtn: {
     paddingHorizontal: spacing.md,

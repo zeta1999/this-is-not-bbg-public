@@ -55,7 +55,7 @@ func TestBinance_BackfillHistorical_Paginates(t *testing.T) {
 	srv := fakeBinanceKlines(t, 3, 5)
 	defer srv.Close()
 
-	a := NewBinanceAdapter(bus.New(8), []string{"BTCUSDT"}, nil, "", srv.URL, 10)
+	a := NewBinanceAdapter(bus.New(8), []string{"BTCUSDT"}, nil, nil, "", srv.URL, 10)
 
 	from := time.Unix(0, 0).UTC()
 	to := from.Add(10 * time.Minute)
@@ -84,7 +84,7 @@ func TestBinance_BackfillHistorical_Paginates(t *testing.T) {
 }
 
 func TestBinance_BackfillHistorical_Validation(t *testing.T) {
-	a := NewBinanceAdapter(bus.New(8), []string{"BTCUSDT"}, nil, "", "http://example.invalid", 1)
+	a := NewBinanceAdapter(bus.New(8), []string{"BTCUSDT"}, nil, nil, "", "http://example.invalid", 1)
 	cases := map[string]feeds.BackfillRequest{
 		"missing instrument": {Timeframe: "1m", From: time.Now().Add(-time.Hour), To: time.Now()},
 		"missing timeframe":  {Instrument: "BTCUSDT", From: time.Now().Add(-time.Hour), To: time.Now()},
@@ -101,7 +101,7 @@ func TestBinance_BackfillHistorical_Validation(t *testing.T) {
 func TestBinance_BackfillHistorical_Cap(t *testing.T) {
 	srv := fakeBinanceKlines(t, 3, 100)
 	defer srv.Close()
-	a := NewBinanceAdapter(bus.New(8), nil, nil, "", srv.URL, 10)
+	a := NewBinanceAdapter(bus.New(8), nil, nil, nil, "", srv.URL, 10)
 
 	got, err := a.BackfillHistorical(context.Background(), feeds.BackfillRequest{
 		Instrument: "BTCUSDT", Timeframe: "1m",

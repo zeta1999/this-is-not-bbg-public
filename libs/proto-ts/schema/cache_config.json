@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/cache-config",
+  "$ref": "#/$defs/CacheConfig",
+  "$defs": {
+    "CacheConfig": {
+      "properties": {
+        "db_path": {
+          "type": "string"
+        },
+        "eviction_interval": {
+          "type": "integer"
+        },
+        "default_ttl": {
+          "type": "integer"
+        },
+        "max_size_mb": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "db_path",
+        "eviction_interval",
+        "default_ttl",
+        "max_size_mb"
+      ]
+    }
+  }
+}

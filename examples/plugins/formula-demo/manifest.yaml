@@ -1,0 +1,16 @@
+name: formula-demo
+command: ./formula-demo
+args: []
+# Subscribe to the plugin's own input topic so cell edits from the
+# GUI (TUI / desktop / phone) get piped to the plugin's stdin.
+# Without this, edits get bus-published by the server but the plugin
+# host never forwards them, so the cell grid never recomputes and
+# the GUI stays "pending" forever.
+input_topics:
+  - "plugin.formula-demo.input"
+output_topics:
+  - "plugin.formula-demo.screen"
+screens:
+  - id: "FORMULA"
+    label: "Formula Demo"
+    icon: "calculator-outline"

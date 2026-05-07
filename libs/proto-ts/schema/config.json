@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/config",
+  "$ref": "#/$defs/Config",
+  "$defs": {
+    "AlertsConfig": {
+      "properties": {
+        "consistency_threshold": {
+          "type": "number"
+        },
+        "check_interval": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "consistency_threshold",
+        "check_interval"
+      ]
+    },
+    "CacheConfig": {
+      "properties": {
+        "db_path": {
+          "type": "string"
+        },
+        "eviction_interval": {
+          "type": "integer"
+        },
+        "default_ttl": {
+          "type": "integer"
+        },
+        "max_size_mb": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "db_path",
+        "eviction_interval",
+        "default_ttl",
+        "max_size_mb"
+      ]
+    },
+    "Config": {
+      "properties": {
+        "server": {
+          "$ref": "#/$defs/ServerConfig"
+        },
+        "feeds": {
+          "$ref": "#/$defs/FeedsConfig"
+        },
+        "cache": {
+          "$ref": "#/$defs/CacheConfig"
+        },
+        "alerts": {
+          "$ref": "#/$defs/AlertsConfig"
+        },
+        "cron": {
+          "items": {
+            "$ref": "#/$defs/CronJobConfig"
+          },
+          "type": "array"
+        },
+        "datalake": {
+          "$ref": "#/$defs/DatalakeConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "server",
+        "feeds",
+        "cache",
+        "alerts"
+      ]
+    },
+    "CronJobConfig": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "schedule",
+        "action",
+        "enabled"
+      ]
+    },
+    "DEXConfig": {
+      "properties": {
+        "uniswap": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "raydium": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "jupiter": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "hyperliquid": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "gmx": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "dydx": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "drift": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "serum": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "orca": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "pancakeswap": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "curve": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "uniswap",
+        "raydium",
+        "jupiter",
+        "hyperliquid",
+        "gmx",
+        "dydx",
+        "drift",
+        "serum",
+        "orca",
+        "pancakeswap",
+        "curve"
+      ]
+    },
+    "DatalakeConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "format": {
+          "type": "string"
+        },
+        "rotation": {
+          "type": "string"
+        },
+        "compression": {
+          "type": "string"
+        },
+        "compress_topics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "path",
+        "topics",
+        "format",
+        "rotation"
+      ]
+    },
+    "ExchangeConfig": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "feed_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rate_limit": {
+          "type": "integer"
+        },
+        "ws_endpoint": {
+          "type": "string"
+        },
+        "rest_base": {
+          "type": "string"
+        },
+        "backfill_days": {
+          "type": "integer"
+        },
+        "timeframes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "enabled",
+        "symbols",
+        "feed_types",
+        "rate_limit",
+        "ws_endpoint",
+        "rest_base",
+        "backfill_days",
+        "timeframes"
+      ]
+    },
+    "FeedSourceConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "cache_ttl": {
+          "type": "integer"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "poll_interval",
+        "cache_ttl"
+      ]
+    },
+    "FeedsConfig": {
+      "properties": {
+        "exchanges": {
+          "items": {
+            "$ref": "#/$defs/ExchangeConfig"
+          },
+          "type": "array"
+        },
+        "dex": {
+          "$ref": "#/$defs/DEXConfig"
+        },
+        "world": {
+          "$ref": "#/$defs/WorldFeedsConfig"
+        },
+        "rss": {
+          "$ref": "#/$defs/RSSConfig"
+        },
+        "sibelius": {
+          "$ref": "#/$defs/FileFeedConfig"
+        },
+        "ravel": {
+          "$ref": "#/$defs/FileFeedConfig"
+        },
+        "tsbase_files": {
+          "$ref": "#/$defs/FileFeedConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "exchanges",
+        "dex",
+        "world",
+        "rss"
+      ]
+    },
+    "FileFeedConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "topic_prefix": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "path",
+        "poll_interval"
+      ]
+    },
+    "RSSConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "feeds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "poll_interval",
+        "feeds"
+      ]
+    },
+    "ServerConfig": {
+      "properties": {
+        "unix_socket": {
+          "type": "string"
+        },
+        "tcp_addr": {
+          "type": "string"
+        },
+        "enable_tcp": {
+          "type": "boolean"
+        },
+        "http_addr": {
+          "type": "string"
+        },
+        "enable_http": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "unix_socket",
+        "tcp_addr",
+        "enable_tcp",
+        "http_addr",
+        "enable_http"
+      ]
+    },
+    "WorldFeedsConfig": {
+      "properties": {
+        "yahoo_finance": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "coingecko": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "fred": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "eia": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "alternative_me": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "mempool_space": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "yahoo_finance",
+        "coingecko",
+        "fred",
+        "eia",
+        "alternative_me",
+        "mempool_space"
+      ]
+    }
+  }
+}

@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/notbbg/notbbg/server/internal/bus"
 	"github.com/notbbg/notbbg/server/internal/config"
 	"github.com/notbbg/notbbg/server/internal/datalake"
+	"github.com/notbbg/notbbg/server/internal/paths"
 	"github.com/notbbg/notbbg/server/internal/transport"
 )
 
@@ -38,7 +38,10 @@ func main() {
 	encConfigPath := flag.String("enc-config", "", "path to encrypted config")
 	pairMode := flag.Bool("pair", false, "generate a one-time pairing token and exit")
 	initSecrets := flag.Bool("init-secrets", false, "create an empty encrypted secrets file and exit")
+	homeOverride := flag.String("home", "", "override the notbbg home directory")
 	flag.Parse()
+
+	notbbgHome := paths.ResolveHome(*homeOverride)
 
 	// Init secrets mode.
 	if *initSecrets {
@@ -163,8 +166,7 @@ func main() {
 	if addr == "" {
 		addr = ":9473"
 	}
-	home, _ := os.UserHomeDir()
-	certDir := filepath.Join(home, ".config", "notbbg", "certs")
+	certDir := paths.Certs(notbbgHome)
 
 	tlsLn := transport.NewTLSListener(addr, certDir, func(conn *transport.FramedConn) {
 		handleServerConnection(ctx, conn, msgBus, authMgr, sessionFile, encKey)

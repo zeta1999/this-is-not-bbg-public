@@ -59,6 +59,28 @@ type PluginCell struct {
 	VisibleWhen string `json:"visible_when,omitempty"`
 	ColSpan     uint32 `json:"col_span,omitempty"`
 	RowSpan     uint32 `json:"row_span,omitempty"`
+
+	// Chart (type=chart) — inline sparkline or bar series.
+	Series []struct {
+		Name   string    `json:"name,omitempty"`
+		Values []float64 `json:"values"`
+		Kind   string    `json:"kind,omitempty"`
+		Color  string    `json:"color,omitempty"`
+	} `json:"series,omitempty"`
+
+	// Table (type=table) — columnar layout inside a single cell.
+	Columns []struct {
+		Header string `json:"header"`
+		Width  uint32 `json:"width,omitempty"`
+		Align  string `json:"align,omitempty"`
+	} `json:"columns,omitempty"`
+	Rows [][]string `json:"rows,omitempty"`
+
+	// Image (type=image) — TUI shows `[IMG alt (src)]` + O opens.
+	Src    string `json:"src,omitempty"`
+	Alt    string `json:"alt,omitempty"`
+	Width  uint32 `json:"width,omitempty"`
+	Height uint32 `json:"height,omitempty"`
 }
 
 // PluginScreenData holds the state for a plugin screen tab.
@@ -472,9 +494,159 @@ func renderCell(c PluginCell) string {
 		}
 		return dimStyle.Render("[" + c.ComponentID + "]")
 
+	case "chart":
+		return renderChartCell(c)
+
+	case "table":
+		return renderTableCell(c)
+
+	case "image":
+		alt := c.Alt
+		if alt == "" {
+			alt = "img"
+		}
+		src := c.Src
+		if src == "" {
+			src = "(missing src)"
+		}
+		// TUI can't render bitmaps inline; surface a clickable-looking
+		// placeholder so the operator sees the cell + can open via
+		// the `o` shortcut (handled in app.go's plugin cell key
+		// handler — routes through openArtifact).
+		return dimStyle.Render("  📎 ") + pluginCyanStyle.Render("[IMG "+alt+"]") + dimStyle.Render("  "+src+"  (o:open)")
+
 	default:
 		return c.Text
 	}
+}
+
+// renderChartCell draws a one-line sparkline per series using the
+// standard eight-row block-character palette. Multiple series
+// stack; series with no Values yield a thin dash placeholder.
+func renderChartCell(c PluginCell) string {
+	const blocks = "▁▂▃▄▅▆▇█"
+	label := c.Label
+	if label != "" {
+		label += " "
+	}
+	if len(c.Series) == 0 {
+		return dimStyle.Render(label) + dimStyle.Render("—")
+	}
+	var parts []string
+	for _, s := range c.Series {
+		if len(s.Values) == 0 {
+			parts = append(parts, dimStyle.Render("—"))
+			continue
+		}
+		min, max := s.Values[0], s.Values[0]
+		for _, v := range s.Values[1:] {
+			if v < min {
+				min = v
+			}
+			if v > max {
+				max = v
+			}
+		}
+		span := max - min
+		var spark strings.Builder
+		for _, v := range s.Values {
+			var idx int
+			if span > 0 {
+				idx = int(((v - min) / span) * float64(len(blocks)-1))
+			}
+			spark.WriteByte(blocks[idx])
+		}
+		segStyle := pluginNormStyle
+		switch strings.ToLower(s.Color) {
+		case "green":
+			segStyle = pluginGreenStyle
+		case "red":
+			segStyle = pluginRedStyle
+		case "cyan":
+			segStyle = pluginCyanStyle
+		case "amber":
+			segStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8C00"))
+		}
+		prefix := ""
+		if s.Name != "" {
+			prefix = dimStyle.Render(s.Name+":") + " "
+		}
+		parts = append(parts, prefix+segStyle.Render(spark.String()))
+	}
+	return dimStyle.Render(label) + strings.Join(parts, "  ")
+}
+
+// renderTableCell lays rows out with per-column width + alignment.
+// Column widths default to max(len(header), max(len(row[col]))).
+// Alignment defaults to left.
+func renderTableCell(c PluginCell) string {
+	label := c.Label
+	if label != "" {
+		label += " "
+	}
+	if len(c.Columns) == 0 {
+		return dimStyle.Render(label) + dimStyle.Render("(empty table)")
+	}
+
+	widths := make([]int, len(c.Columns))
+	for i, col := range c.Columns {
+		widths[i] = len(col.Header)
+		if col.Width > 0 {
+			widths[i] = int(col.Width)
+		}
+	}
+	for _, row := range c.Rows {
+		for i, v := range row {
+			if i >= len(widths) {
+				break
+			}
+			if c.Columns[i].Width == 0 && len(v) > widths[i] {
+				widths[i] = len(v)
+			}
+		}
+	}
+
+	formatCell := func(val string, col int) string {
+		w := widths[col]
+		align := c.Columns[col].Align
+		if len(val) > w {
+			val = val[:w]
+		}
+		switch align {
+		case "right":
+			return strings.Repeat(" ", w-len(val)) + val
+		case "center":
+			pad := w - len(val)
+			l := pad / 2
+			return strings.Repeat(" ", l) + val + strings.Repeat(" ", pad-l)
+		default:
+			return val + strings.Repeat(" ", w-len(val))
+		}
+	}
+
+	var lines []string
+	// Header row.
+	var headerParts []string
+	for i, col := range c.Columns {
+		headerParts = append(headerParts, pluginCyanStyle.Render(formatCell(col.Header, i)))
+	}
+	lines = append(lines, strings.Join(headerParts, "  "))
+	// Data rows.
+	for _, row := range c.Rows {
+		var parts []string
+		for i := range c.Columns {
+			v := ""
+			if i < len(row) {
+				v = row[i]
+			}
+			parts = append(parts, pluginNormStyle.Render(formatCell(v, i)))
+		}
+		lines = append(lines, strings.Join(parts, "  "))
+	}
+	if label != "" {
+		lines = append([]string{dimStyle.Render(label)}, lines...)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // cellStyle converts a PluginCellStyle to a lipgloss style.

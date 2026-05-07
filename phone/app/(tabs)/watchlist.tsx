@@ -1,74 +1,30 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { View, Text, FlatList, TextInput, StyleSheet } from "react-native";
 import { colors, fonts, spacing, presets } from "../../src/theme";
-import { getServerUrl, getToken, onConnectionChange } from "../../src/connection";
-
-interface PriceEntry {
-  instrument: string;
-  exchange: string;
-  price: number;
-  change: number;
-}
-
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-// Poll /api/v1/snapshot for OHLC data (React Native has no EventSource).
-function usePrices() {
-  const [prices, setPrices] = useState<Map<string, PriceEntry>>(new Map());
-  const [connected, setConnected] = useState(false);
-  const [token, setToken] = useState(getToken());
-
-  // Re-read token when connection changes (after pairing in Settings).
-  useEffect(() => {
-    const unsub = onConnectionChange(() => setToken(getToken()));
-    return unsub;
-  }, []);
-
-  useEffect(() => {
-    if (!token) { setConnected(false); return; }
-    let active = true;
-
-    async function poll() {
-      while (active) {
-        try {
-          const url = getServerUrl();
-          const resp = await fetch(`${url}/api/v1/snapshot?topic=ohlc.*.*&mode=latest&token=${encodeURIComponent(token)}`);
-          if (!resp.ok) { setConnected(false); await sleep(5000); continue; }
-          const data = await resp.json();
-          if (!Array.isArray(data)) { await sleep(3000); continue; }
-
-          setConnected(true);
-          setPrices((prev) => {
-            const m = new Map(prev);
-            for (const p of data) {
-              const key = `${p.Instrument}/${p.Exchange}`;
-              const old = m.get(key);
-              const change = old && old.price > 0 ? ((p.Close - old.price) / old.price * 100) : 0;
-              m.set(key, { instrument: p.Instrument, exchange: p.Exchange, price: p.Close, change });
-            }
-            return m;
-          });
-        } catch {
-          setConnected(false);
-        }
-        await sleep(5000);
-      }
-    }
-
-    poll();
-    return () => { active = false; };
-  }, [token]);
-
-  return { prices, connected };
-}
+import { useStore } from "../../src/store";
 
 export default function WatchlistScreen() {
-  const { prices, connected } = usePrices();
+  const { prices, priceKeys, connected, lastEventAt } = useStore();
   const [search, setSearch] = useState("");
+  // Re-render the freshness indicator on a 1s tick so the user
+  // sees the "live N s ago" counter advance even when no new data
+  // has arrived. Decoupled from the SSE event path so quiet
+  // markets don't appear frozen.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
-  const items = Array.from(prices.values())
-    .filter((p) => !search || p.instrument.toLowerCase().includes(search.toLowerCase()) || p.exchange.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => a.instrument.localeCompare(b.instrument));
+  const items = useMemo(() => {
+    const all = priceKeys.map((k) => prices.get(k)!).filter(Boolean);
+    const q = search.toLowerCase();
+    return all
+      .filter((p) => !q
+        || p.instrument.toLowerCase().includes(q)
+        || p.exchange.toLowerCase().includes(q))
+      .sort((a, b) => a.instrument.localeCompare(b.instrument));
+  }, [prices, priceKeys, search]);
 
   const fmtPrice = (p: number) => {
     if (p >= 10000) return `$${Math.round(p).toLocaleString()}`;
@@ -84,7 +40,11 @@ export default function WatchlistScreen() {
         value={search} onChangeText={setSearch} />
       <View style={s.connRow}>
         <View style={[s.dot, { backgroundColor: connected ? colors.green : colors.red }]} />
-        <Text style={s.connText}>{connected ? "CONNECTED" : "DISCONNECTED — go to Settings to pair"}</Text>
+        <Text style={s.connText}>
+          {connected
+            ? `LIVE — last update ${lastEventAt ? Math.max(0, Math.floor((now - lastEventAt) / 1000)) + "s ago" : "—"}`
+            : "DISCONNECTED — go to Settings to pair"}
+        </Text>
       </View>
       <FlatList
         data={items}

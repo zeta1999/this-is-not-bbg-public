@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/alerts-config",
+  "$ref": "#/$defs/AlertsConfig",
+  "$defs": {
+    "AlertsConfig": {
+      "properties": {
+        "consistency_threshold": {
+          "type": "number"
+        },
+        "check_interval": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "consistency_threshold",
+        "check_interval"
+      ]
+    }
+  }
+}

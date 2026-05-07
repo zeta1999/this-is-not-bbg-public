@@ -1,0 +1,18 @@
+# full.txt — every plugin in examples/plugins/. Used for the
+# "demo everything" build. One plugin name per line; blank lines
+# and `#` comments are ignored. Names map 1:1 to directory names
+# under examples/plugins/.
+backtester
+formula-demo
+formulettes-runner
+hello-rs
+hello-world
+monitor
+ohlc-png
+oms
+optimizer
+portfolio
+pricer
+swaption
+timeseries
+voltools

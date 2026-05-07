@@ -34,6 +34,7 @@ import (
 	"github.com/notbbg/notbbg/server/internal/feeds/tsbase_files"
 	"github.com/notbbg/notbbg/server/internal/feeds/world"
 	"github.com/notbbg/notbbg/server/internal/monitor"
+	"github.com/notbbg/notbbg/server/internal/paths"
 	"github.com/notbbg/notbbg/server/internal/plugins"
 	"github.com/notbbg/notbbg/server/internal/transport"
 )
@@ -44,7 +45,10 @@ func main() {
 	initSecrets := flag.Bool("init-secrets", false, "create an empty encrypted secrets file and exit")
 	collectorAddr := flag.String("collector", "", "push data to remote collector (e.g. ajax:9473)")
 	collectorToken := flag.String("collector-token", "", "pairing token for remote collector")
+	homeOverride := flag.String("home", "", "override the notbbg home directory (default: $XDG_CONFIG_HOME/notbbg or ~/.config/notbbg)")
 	flag.Parse()
+
+	notbbgHome := paths.ResolveHome(*homeOverride)
 
 	// Init secrets mode.
 	if *initSecrets {
@@ -77,6 +81,27 @@ func main() {
 	if err != nil {
 		slog.Error("load config", "error", err)
 		os.Exit(1)
+	}
+
+	// Optional watchlist — sits next to the main config as
+	// watchlist.yaml. Lets the operator track companies (yahoo
+	// quotes + RSS news) without editing the canonical config or
+	// leaking trading activity into a tracked file. Missing file
+	// is fine; a parse error is fatal so a malformed personal
+	// watchlist doesn't silently disappear from the running set.
+	wlPath := config.WatchlistPath(*configPath)
+	if wl, err := config.LoadWatchlist(wlPath); err != nil {
+		slog.Error("load watchlist", "path", wlPath, "error", err)
+		os.Exit(1)
+	} else if wl != nil {
+		ySymBefore := len(cfg.Feeds.World.YahooFinance.Symbols)
+		rssBefore := len(cfg.Feeds.RSS.Feeds)
+		wl.MergeInto(cfg)
+		slog.Info("loaded watchlist",
+			"path", wlPath,
+			"companies", len(wl.Companies),
+			"yahoo_added", len(cfg.Feeds.World.YahooFinance.Symbols)-ySymBefore,
+			"rss_added", len(cfg.Feeds.RSS.Feeds)-rssBefore)
 	}
 
 	// Load encrypted config if specified (API keys, webhook URLs, etc.).
@@ -205,7 +230,11 @@ func main() {
 	}
 
 	// Alert engine (needed before listeners for create_alert handling).
+	// Persist rules under <home>/alerts.json so they survive restarts.
 	alertEngine := alerts.NewEngine(msgBus)
+	if err := alertEngine.EnablePersistence(filepath.Join(notbbgHome, "alerts.json")); err != nil {
+		slog.Warn("alerts persistence", "error", err)
+	}
 	g.Go(func() error {
 		return alertEngine.Run(ctx)
 	})
@@ -238,7 +267,7 @@ func main() {
 		switch exCfg.Name {
 		case "binance":
 			adapter := ccxt.NewBinanceAdapter(
-				msgBus, exCfg.Symbols, exCfg.FeedTypes,
+				msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.Timeframes,
 				exCfg.WSEndpoint, exCfg.RESTBase, exCfg.RateLimit,
 			)
 			_ = feedMgr.Register(adapter)
@@ -269,6 +298,15 @@ func main() {
 			_ = feedMgr.Register(adapter)
 		case "bitget":
 			adapter := ccxt.NewBitgetAdapter(msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.WSEndpoint)
+			_ = feedMgr.Register(adapter)
+		case "gateio":
+			adapter := ccxt.NewGateioAdapter(msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.WSEndpoint)
+			_ = feedMgr.Register(adapter)
+		case "htx", "huobi":
+			adapter := ccxt.NewHTXAdapter(msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.WSEndpoint)
+			_ = feedMgr.Register(adapter)
+		case "mexc":
+			adapter := ccxt.NewMEXCAdapter(msgBus, exCfg.Symbols, exCfg.FeedTypes, exCfg.RESTBase, 0)
 			_ = feedMgr.Register(adapter)
 		default:
 			slog.Warn("unknown exchange adapter, skipping", "name", exCfg.Name)
@@ -315,9 +353,33 @@ func main() {
 	}
 	if cfg.Feeds.DEX.DYDX.Enabled {
 		_ = feedMgr.Register(dex.NewDYDXAdapter(msgBus, cfg.Feeds.DEX.DYDX.PollInterval))
+		// When symbols are configured, also register the v4 indexer-WS
+		// adapter alongside the price-only defi-llama poller. The
+		// two adapters publish on different topics (perp.dydx.* +
+		// trade.dydx.* vs the defi token price stream) and don't
+		// conflict.
+		if len(cfg.Feeds.DEX.DYDX.Symbols) > 0 {
+			_ = feedMgr.Register(dex.NewDYDXV4Adapter(
+				msgBus,
+				cfg.Feeds.DEX.DYDX.PollInterval,
+				cfg.Feeds.DEX.DYDX.Symbols,
+				"",
+			))
+		}
 	}
 	if cfg.Feeds.DEX.Drift.Enabled {
 		_ = feedMgr.Register(dex.NewDriftAdapter(msgBus, cfg.Feeds.DEX.Drift.PollInterval))
+		// Opt-in v2 perp poller: uses the same Enabled flag but
+		// subscribes to the REST indexer only when APIKey is set
+		// to the non-default URL marker "drift-v2" (cheap opt-in
+		// to avoid changing FeedSourceConfig yet another time).
+		if cfg.Feeds.DEX.Drift.APIKey == "drift-v2" {
+			_ = feedMgr.Register(dex.NewDriftV2Adapter(
+				msgBus,
+				cfg.Feeds.DEX.Drift.PollInterval,
+				"",
+			))
+		}
 	}
 	if cfg.Feeds.DEX.Serum.Enabled {
 		_ = feedMgr.Register(dex.NewSerumAdapter(msgBus, cfg.Feeds.DEX.Serum.PollInterval))
@@ -368,14 +430,21 @@ func main() {
 	})
 
 	// Plugin manager.
-	home, _ := os.UserHomeDir()
-	pluginDir := filepath.Join(home, ".config", "notbbg", "plugins")
+	pluginDir := paths.Plugins(notbbgHome)
 	pluginMgr := plugins.NewManager(msgBus, pluginDir)
 	if err := pluginMgr.LoadAll(); err != nil {
 		slog.Warn("plugin load", "error", err)
 	}
 	g.Go(func() error {
 		return pluginMgr.StartAll(ctx)
+	})
+
+	// Plugin hot-reload: poll the plugin dir every 5 s so operators
+	// can drop in a new plugin, remove a stale one, or edit a
+	// manifest without restarting the server.
+	g.Go(func() error {
+		pluginMgr.Watch(ctx, 5*time.Second)
+		return nil
 	})
 
 	// System health monitor.
@@ -392,21 +461,49 @@ func main() {
 		return consistencyChecker.Run(ctx)
 	})
 
-	// Cache writer: persist bus messages to BBolt.
+	// Cross-venue sanity snapshot — publishes SanitySnapshot per
+	// curated pair to `sanity.prices` every SanityInterval. No-op if
+	// SanityPairs is empty.
+	sanityChecker := monitor.NewPricesSanityChecker(
+		msgBus, cfg.Alerts.SanityInterval, cfg.Alerts.SanityThresholdPct, cfg.Alerts.SanityPairs,
+	)
+	g.Go(func() error {
+		return sanityChecker.Run(ctx)
+	})
+
+	// Bus stats publisher: every 10s emit a snapshot on `bus.stats`
+	// so MON panels + external subscribers can watch subscriber
+	// count, topic count, and total drops without log-scraping.
+	g.Go(func() error {
+		return publishBusStats(ctx, msgBus)
+	})
+
+	// Cache writer: persist bus messages to BBolt. Route through a
+	// disk-spill WAL so a transiently-slow BBolt Put (contention,
+	// fsync stall) doesn't back up into bus drops. Budget 512 MB,
+	// matching BACKPRESSURE-PROPOSAL §6.4.
 	cacheWriter := cache.NewWriter(store, msgBus)
+	if cfg.Cache.DBPath != "" {
+		cacheWriter.EnableWAL(cfg.Cache.DBPath+".wal", 512*1024*1024)
+	}
 	g.Go(func() error {
 		return cacheWriter.Run(ctx)
 	})
 
-	// Datalake writer.
+	// Datalake writer. Disk-spill WAL rooted at <Path>/.wal absorbs
+	// fsync / slow-NAS stalls without either blocking the bus or
+	// silently dropping audit data within the 512 MB budget.
 	if cfg.Datalake.Enabled && cfg.Datalake.Path != "" {
 		dlWriter := datalake.New(msgBus, datalake.Config{
-			Path:     cfg.Datalake.Path,
-			Enabled:  true,
-			Topics:   cfg.Datalake.Topics,
-			Format:   cfg.Datalake.Format,
-			Rotation: cfg.Datalake.Rotation,
+			Path:           cfg.Datalake.Path,
+			Enabled:        true,
+			Topics:         cfg.Datalake.Topics,
+			Format:         cfg.Datalake.Format,
+			Rotation:       cfg.Datalake.Rotation,
+			Compression:    cfg.Datalake.Compression,
+			CompressTopics: cfg.Datalake.CompressTopics,
 		})
+		dlWriter.EnableWAL(filepath.Join(cfg.Datalake.Path, ".wal"), 512*1024*1024)
 		g.Go(func() error {
 			return dlWriter.Run(ctx)
 		})
@@ -439,8 +536,7 @@ func main() {
 
 	// TCP+TLS listener.
 	if cfg.Server.EnableTCP {
-		home, _ := os.UserHomeDir()
-		certDir := filepath.Join(home, ".config", "notbbg", "certs")
+		certDir := paths.Certs(notbbgHome)
 		tlsLn := transport.NewTLSListener(cfg.Server.TCPAddr, certDir, func(conn *transport.FramedConn) {
 			handleClient(ctx, conn, msgBus, store, authMgr, alertEngine)
 		})
@@ -464,8 +560,7 @@ func main() {
 		}
 		// Enable HTTPS only for non-localhost addresses (LAN/remote access).
 		if !strings.HasPrefix(cfg.Server.HTTPAddr, "127.0.0.1") && !strings.HasPrefix(cfg.Server.HTTPAddr, "localhost") {
-			home, _ := os.UserHomeDir()
-			httpCertDir := filepath.Join(home, ".config", "notbbg", "certs")
+			httpCertDir := paths.Certs(notbbgHome)
 			if _, err := os.Stat(filepath.Join(httpCertDir, "server.crt")); err == nil {
 				httpGW.SetCertDir(httpCertDir)
 			}
@@ -515,8 +610,89 @@ func handleRequest(req *transport.WireMsg, sub **bus.Subscriber, authenticated *
 		if len(patterns) == 0 {
 			patterns = []string{"*.*.*", "news", "alert", "feed.status", "system.health", "indicator.*", "agent.suggestion", "plugin.*", "plugin.*.*"}
 		}
-		*sub = msgBus.Subscribe(4096, patterns...)
+		*sub = msgBus.SubscribeWithOptions(bus.SubscribeOptions{
+			BufSize:     4096,
+			Patterns:    patterns,
+			Policy:      bus.CoalesceByKey,
+			CoalesceKey: bus.CoalesceByTopicMatch(transport.IsCoalescableTopic),
+		})
 		slog.Info("client subscribed", "patterns", patterns)
+
+		// Backfill log-like topics (news, alert) at subscribe time
+		// so the TUI's NEWS / ALERTS panels land populated instead
+		// of "0 items / waiting for feed". Snapshot-like topics
+		// (lob, ohlc, trade.snap) are left to the live stream and
+		// the dedicated /api/v1/snapshot endpoint that the desktop
+		// already uses for OHLC history. Mirrors the same backfill
+		// the SSE handler does on connect.
+		const perTopicBackfill = 100
+		for _, m := range msgBus.RecentPerTopic(perTopicBackfill, "news", "alert") {
+			payload, err := json.Marshal(m.Payload)
+			if err != nil {
+				continue
+			}
+			wm := &transport.WireMsg{Type: transport.MsgUpdate, Topic: m.Topic, Payload: payload}
+			if data, err := wm.Encode(); err == nil {
+				_ = conn.WriteFrame(data)
+			}
+		}
+
+		// Also replay the latest snapshot for state-y "registry"
+		// topics so a TUI client that connects AFTER the server
+		// already published its plugin registry doesn't sit there
+		// with empty plugin tabs. Same idea the SSE handler in
+		// http.go applies via bus.LatestPerTopic — TUI was missing
+		// it, which is the "where are the plugins gone???"
+		// regression from 2026-04-28 ski.txt.
+		stateTopics := []string{"plugin.registry", "feed.status", "plugin.status", "bus.stats", "wal.cache.stats", "wal.datalake.stats"}
+		for _, m := range msgBus.LatestPerTopic(stateTopics...) {
+			payload, err := json.Marshal(m.Payload)
+			if err != nil {
+				continue
+			}
+			wm := &transport.WireMsg{Type: transport.MsgUpdate, Topic: m.Topic, Payload: payload}
+			if data, err := wm.Encode(); err == nil {
+				_ = conn.WriteFrame(data)
+			}
+		}
+
+	case transport.MsgClientHello:
+		// U8 handshake. Major mismatch refuses; minor mismatch logs
+		// INFO and continues. Server always replies with its own
+		// version so clients can do their own checking.
+		reason, mismatched, accept := transport.VersionMismatch(req.Major, req.Minor)
+		resp := &transport.WireMsg{
+			Type:  transport.MsgServerHello,
+			Major: transport.ProtocolMajor,
+			Minor: transport.ProtocolMinor,
+		}
+		if mismatched && !accept {
+			resp.Error = reason
+			data, _ := resp.Encode()
+			_ = conn.WriteFrame(data)
+			slog.Warn("client hello refused",
+				"client_name", req.ClientName,
+				"client_major", req.Major, "client_minor", req.Minor,
+				"reason", reason)
+			// Refusing means we close the connection — drop the
+			// implicit subscription so the read loop unblocks.
+			if *sub != nil {
+				msgBus.Unsubscribe(*sub)
+				*sub = nil
+			}
+			_ = conn.Close()
+			return
+		}
+		if mismatched {
+			slog.Info("client hello minor differs",
+				"client_name", req.ClientName,
+				"client_major", req.Major, "client_minor", req.Minor,
+				"server_major", transport.ProtocolMajor,
+				"server_minor", transport.ProtocolMinor,
+				"note", reason)
+		}
+		data, _ := resp.Encode()
+		_ = conn.WriteFrame(data)
 
 	case transport.MsgPair:
 		sessionID, _, err := authMgr.Pair(req.Token, req.ClientName)
@@ -581,6 +757,24 @@ func handleRequest(req *transport.WireMsg, sub **bus.Subscriber, authenticated *
 				slog.Info("plugin input routed", "topic", inputTopic)
 			}
 		}
+
+	case transport.MsgPluginJobCancel:
+		// Operator asked to cancel a long-running plugin job. Encode
+		// as a sentinel InputEvent with Kind=cancel and publish to
+		// the plugin's input topic — plugins that use the SDK
+		// helper see it as `event.IsCancel()`.
+		if req.Topic != "" && req.JobID != "" {
+			inputTopic := strings.TrimSuffix(req.Topic, ".screen") + ".input"
+			msgBus.Publish(bus.Message{
+				Topic: inputTopic,
+				Payload: map[string]any{
+					"kind":      "cancel",
+					"screen_id": strings.TrimPrefix(strings.TrimSuffix(req.Topic, ".screen"), "plugin."),
+					"job_id":    req.JobID,
+				},
+			})
+			slog.Info("plugin job cancel routed", "topic", inputTopic, "job_id", req.JobID)
+		}
 	}
 }
 
@@ -631,6 +825,65 @@ func handleQuery(req *transport.WireMsg, conn *transport.FramedConn, store *cach
 	_ = conn.WriteFrame(data)
 
 	slog.Debug("query served", "query", req.Query, "results", len(results))
+}
+
+// BusStats is the snapshot published periodically on `bus.stats`.
+// Matches bus.Stats() plus a wallclock timestamp so consumers can
+// age-out stale readings without reading the topic's ring buffer.
+type BusStats struct {
+	Subscribers int    `json:"subscribers"`
+	Topics      int    `json:"topics"`
+	Dropped     uint64 `json:"dropped"`
+	UnixMilli   int64  `json:"ts_ms"`
+}
+
+// publishBusStats loops until ctx cancels, emitting a fresh BusStats
+// snapshot every 10 seconds. Non-fatal: any transient publish error
+// is treated as "try again next tick".
+func publishBusStats(ctx context.Context, b *bus.Bus) error {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+			s := b.Stats()
+			b.Publish(bus.Message{
+				Topic: "bus.stats",
+				Payload: BusStats{
+					Subscribers: s.Subscribers,
+					Topics:      s.Topics,
+					Dropped:     s.Dropped,
+					UnixMilli:   time.Now().UnixMilli(),
+				},
+			})
+		}
+	}
+}
+
+// watchOverflow polls the client's bus subscriber for drop-counter
+// increments and emits MsgOverflow to the relay's control lane so the
+// client sees a gap notice. Runs until relayCtx cancels.
+func watchOverflow(ctx context.Context, sub *bus.Subscriber, relay *clientRelay) {
+	t := time.NewTicker(1 * time.Second)
+	defer t.Stop()
+	var last uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cur := sub.Dropped()
+			if cur > last {
+				relay.enqueueControl(&transport.WireMsg{
+					Type:    transport.MsgOverflow,
+					Dropped: uint32(cur - last),
+				})
+				last = cur
+			}
+		}
+	}
 }
 
 func handleClient(ctx context.Context, conn *transport.FramedConn, msgBus *bus.Bus, store *cache.Store, authMgr *auth.Manager, alertEngine *alerts.Engine) {
@@ -687,6 +940,10 @@ func handleClient(ctx context.Context, conn *transport.FramedConn, msgBus *bus.B
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	defer relayCancel()
 	go relay.splitter(relayCtx, sub)
+
+	// Overflow watcher: surface bus-level drops to the client as
+	// MsgOverflow on the control lane (priority above realtime).
+	go watchOverflow(relayCtx, sub, relay)
 
 	// Start sender in background, capture errors.
 	senderErr := make(chan error, 1)

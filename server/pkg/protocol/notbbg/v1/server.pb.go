@@ -859,14 +859,7 @@ const file_notbbg_v1_server_proto_rawDesc = "" +
 	"\x19EXPORT_FORMAT_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12EXPORT_FORMAT_JSON\x10\x01\x12\x17\n" +
 	"\x13EXPORT_FORMAT_JSONL\x10\x02\x12\x15\n" +
-	"\x11EXPORT_FORMAT_CSV\x10\x032\x87\x03\n" +
-	"\vDataService\x12H\n" +
-	"\tSubscribe\x12\x1b.notbbg.v1.SubscribeRequest\x1a\x1c.notbbg.v1.SubscribeResponse0\x01\x12:\n" +
-	"\x05Query\x12\x17.notbbg.v1.QueryRequest\x1a\x18.notbbg.v1.QueryResponse\x12Q\n" +
-	"\fGetDataRange\x12\x1e.notbbg.v1.GetDataRangeRequest\x1a\x1f.notbbg.v1.GetDataRangeResponse0\x01\x12K\n" +
-	"\n" +
-	"ExportData\x12\x1c.notbbg.v1.ExportDataRequest\x1a\x1d.notbbg.v1.ExportDataResponse0\x01\x12R\n" +
-	"\rGetFeedStatus\x12\x1f.notbbg.v1.GetFeedStatusRequest\x1a .notbbg.v1.GetFeedStatusResponseB.Z,github.com/notbbg/notbbg/server/pkg/protocolb\x06proto3"
+	"\x11EXPORT_FORMAT_CSV\x10\x03B.Z,github.com/notbbg/notbbg/server/pkg/protocolb\x06proto3"
 
 var (
 	file_notbbg_v1_server_proto_rawDescOnce sync.Once
@@ -923,18 +916,8 @@ var file_notbbg_v1_server_proto_depIdxs = []int32{
 	4,  // 13: notbbg.v1.ExportDataRequest.query:type_name -> notbbg.v1.QueryRequest
 	1,  // 14: notbbg.v1.ExportDataRequest.format:type_name -> notbbg.v1.ExportFormat
 	21, // 15: notbbg.v1.GetFeedStatusResponse.feeds:type_name -> notbbg.v1.FeedStatus
-	2,  // 16: notbbg.v1.DataService.Subscribe:input_type -> notbbg.v1.SubscribeRequest
-	4,  // 17: notbbg.v1.DataService.Query:input_type -> notbbg.v1.QueryRequest
-	6,  // 18: notbbg.v1.DataService.GetDataRange:input_type -> notbbg.v1.GetDataRangeRequest
-	9,  // 19: notbbg.v1.DataService.ExportData:input_type -> notbbg.v1.ExportDataRequest
-	11, // 20: notbbg.v1.DataService.GetFeedStatus:input_type -> notbbg.v1.GetFeedStatusRequest
-	3,  // 21: notbbg.v1.DataService.Subscribe:output_type -> notbbg.v1.SubscribeResponse
-	5,  // 22: notbbg.v1.DataService.Query:output_type -> notbbg.v1.QueryResponse
-	7,  // 23: notbbg.v1.DataService.GetDataRange:output_type -> notbbg.v1.GetDataRangeResponse
-	10, // 24: notbbg.v1.DataService.ExportData:output_type -> notbbg.v1.ExportDataResponse
-	12, // 25: notbbg.v1.DataService.GetFeedStatus:output_type -> notbbg.v1.GetFeedStatusResponse
-	21, // [21:26] is the sub-list for method output_type
-	16, // [16:21] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
 	16, // [16:16] is the sub-list for extension type_name
 	16, // [16:16] is the sub-list for extension extendee
 	0,  // [0:16] is the sub-list for field type_name
@@ -954,7 +937,7 @@ func file_notbbg_v1_server_proto_init() {
 			NumEnums:      2,
 			NumMessages:   11,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   0,
 		},
 		GoTypes:           file_notbbg_v1_server_proto_goTypes,
 		DependencyIndexes: file_notbbg_v1_server_proto_depIdxs,

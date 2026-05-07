@@ -1,0 +1,1 @@
+{"instrument":"BTCUSDT","exchange":"binance","timestamp":"2026-04-25T12:00:00Z","sequenceNumber":"100","bids":[{"price":65000.5,"quantity":1.25,"priceDecimal":"65000.50","quantityDecimal":"1.25"}],"asks":[{"price":65010.0,"quantity":0.75,"orderCount":3}]}

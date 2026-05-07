@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // Reader scans datalake JSONL files by Hive-partitioned path.
@@ -90,22 +93,29 @@ func (r *Reader) Query(dataType, exchange, instrument string, start, end time.Ti
 	return records, nil
 }
 
-// readJSONLFile reads up to maxRecords from a JSONL file.
-// Supports .jsonl (plain) — .jsonl.zst (compressed) support TODO.
+// readJSONLFile reads up to maxRecords from a JSONL file. Supports
+// both .jsonl (plain) and .jsonl.zst (zstd-compressed) — the zstd
+// reader consumes multiple concatenated frames transparently, so
+// appends across process restarts decode without special handling.
 func readJSONLFile(path string, maxRecords int) ([]Record, error) {
-	if strings.HasSuffix(path, ".zst") {
-		// TODO: zstd decompression
-		return nil, fmt.Errorf("zstd not yet supported")
-	}
-
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
+	var src io.Reader = f
+	if strings.HasSuffix(path, ".zst") {
+		zr, err := zstd.NewReader(f)
+		if err != nil {
+			return nil, fmt.Errorf("zstd open %s: %w", path, err)
+		}
+		defer zr.Close()
+		src = zr
+	}
+
 	var records []Record
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for scanner.Scan() && len(records) < maxRecords {

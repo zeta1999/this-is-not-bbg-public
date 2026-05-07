@@ -24,6 +24,12 @@ type DatalakeConfig struct {
 	Topics   []string `yaml:"topics"`   // glob patterns (default: all)
 	Format   string   `yaml:"format"`   // "jsonl" (default)
 	Rotation string   `yaml:"rotation"` // "daily" (default) or "hourly"
+
+	// Compression: "" or "none" (default) disables; "zstd" turns on
+	// zstd compression for matching topics. CompressTopics empty
+	// means "all" — otherwise it's a glob-pattern allowlist.
+	Compression    string   `yaml:"compression,omitempty"`
+	CompressTopics []string `yaml:"compress_topics,omitempty"`
 }
 
 type ServerConfig struct {
@@ -120,6 +126,12 @@ type CronJobConfig struct {
 type AlertsConfig struct {
 	ConsistencyThreshold float64       `yaml:"consistency_threshold"` // cross-exchange divergence %
 	CheckInterval        time.Duration `yaml:"check_interval"`
+
+	// Cross-venue sanity checker — publishes SanitySnapshot per
+	// curated pair to `sanity.prices` every SanityInterval.
+	SanityInterval     time.Duration `yaml:"sanity_interval,omitempty"`
+	SanityThresholdPct float64       `yaml:"sanity_threshold_pct,omitempty"`
+	SanityPairs        []string      `yaml:"sanity_pairs,omitempty"` // e.g. [BTCUSDT, ETHUSDT, SOLUSDT]
 }
 
 func Load(path string) (*Config, error) {

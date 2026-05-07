@@ -1,4 +1,10 @@
 // Package cache provides a BBolt-backed time-series cache with TTL-based eviction.
+//
+// Insertion-time prefix is 8-byte big-endian UnixNano (was UnixMilli before
+// 2026-04-25). Existing cache files written under the old encoding will read
+// back as far-future timestamps and be evicted on the next sweep — operators
+// upgrading should `rm -rf <cache.DBPath>` once to avoid spurious "missing
+// data" warnings until live ingest catches up.
 package cache
 
 import (
@@ -76,9 +82,9 @@ func (s *Store) Put(bucket, key string, data []byte) error {
 		if b == nil {
 			return fmt.Errorf("bucket %s not found", bucket)
 		}
-		// Prefix with insertion timestamp for TTL eviction.
+		// Prefix with insertion timestamp (ns) for TTL eviction.
 		record := make([]byte, 8+len(data))
-		binary.BigEndian.PutUint64(record[:8], uint64(time.Now().UnixMilli()))
+		binary.BigEndian.PutUint64(record[:8], uint64(time.Now().UnixNano()))
 		copy(record[8:], data)
 		return b.Put([]byte(key), record)
 	})
@@ -99,7 +105,7 @@ func (s *Store) Get(bucket, key string) ([]byte, error) {
 		if len(v) < 8 {
 			return nil
 		}
-		insertedAt := time.UnixMilli(int64(binary.BigEndian.Uint64(v[:8])))
+		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(v[:8])))
 		if time.Since(insertedAt) > s.getTTL(bucket) {
 			return nil // expired
 		}
@@ -129,7 +135,7 @@ func (s *Store) Scan(bucket, prefix string, fn func(key string, data []byte) err
 			if len(v) < 8 {
 				continue
 			}
-			insertedAt := time.UnixMilli(int64(binary.BigEndian.Uint64(v[:8])))
+			insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(v[:8])))
 			if time.Since(insertedAt) > ttl {
 				continue
 			}
@@ -146,7 +152,7 @@ func (s *Store) Scan(bucket, prefix string, fn func(key string, data []byte) err
 func (s *Store) Evict() error {
 	for _, name := range bucketNames {
 		ttl := s.getTTL(name)
-		cutoff := time.Now().Add(-ttl).UnixMilli()
+		cutoff := time.Now().Add(-ttl).UnixNano()
 
 		err := s.db.Update(func(tx *bolt.Tx) error {
 			b := tx.Bucket([]byte(name))

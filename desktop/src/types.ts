@@ -24,7 +24,7 @@ export interface Trade {
 export interface LOBLevel {
   price: number;
   size: number;
-  count: number;
+  orderCount?: number;
 }
 
 export interface LOBSnapshot {

@@ -120,7 +120,7 @@ var yahooTimeframes = []struct {
 }{
 	{"5d", "15m", "15m"},
 	{"5d", "1h", "1h"},
-	{"1mo", "1d", "1d"},
+	{"5y", "1d", "1d"}, // 5-year daily horizon — matches binance/ccxt 365d+ depth so the 1d chart isn't 22 trading days wide
 }
 
 func (a *YahooFinanceAdapter) fetch(ctx context.Context) {
@@ -231,14 +231,21 @@ func (a *YahooFinanceAdapter) fetchSymbolTF(ctx context.Context, symbol, rng, in
 		}
 	}
 
-	// Always publish current price as the latest candle.
+	// Always publish current price as the latest candle. Anchor the
+	// bar timestamp to TODAY's UTC open so a sanity / DataRange
+	// consumer can interpret it as "today's 1d bar in progress" — the
+	// previous `Timestamp: now` stamped every poll at the polling
+	// instant, which made the bar look like "now" instead of "the 1d
+	// bar that opened at 00:00 UTC", and sanity flagged it as live
+	// against bars that had real bar-open times.
+	dayOpen := now.UTC().Truncate(24 * time.Hour)
 	a.bus.Publish(bus.Message{
 		Topic: fmt.Sprintf("ohlc.yahoo.%s", meta.Symbol),
 		Payload: feeds.OHLC{
 			Instrument: meta.Symbol,
 			Exchange:   "yahoo",
 			Timeframe:  "1d",
-			Timestamp:  now,
+			Timestamp:  dayOpen,
 			Open:       meta.RegularMarketPrice,
 			High:       meta.RegularMarketPrice,
 			Low:        meta.RegularMarketPrice,

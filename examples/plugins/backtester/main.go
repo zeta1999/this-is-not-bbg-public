@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -62,6 +63,12 @@ type state struct {
 	histResult   *historicalResult
 	scriptName   string // filename (without path) for custom scripts
 	customScript string // content of the custom script
+
+	// histCancel, when non-nil, cancels the in-flight historical
+	// backtest (bt-engine subprocess). Set by runHistoricalBacktest;
+	// cleared once the job finishes. The input handler calls it when
+	// it sees an InputEvent{Kind:"cancel"}.
+	histCancel func()
 }
 
 const scriptsDir = ".config/this-is-not-bbg/scripts"
@@ -137,6 +144,17 @@ func main() {
 		case msg.Topic == "plugin.backtester.input":
 			var evt sdk.InputEvent
 			if json.Unmarshal(msg.Payload, &evt) != nil {
+				return
+			}
+			if evt.IsCancel() {
+				if s.histCancel != nil {
+					s.histCancel()
+					s.histCancel = nil
+				}
+				if s.histResult != nil && s.histResult.status == "running" {
+					s.histResult.status = "cancelled"
+				}
+				p.UpdateCellGrid("BACKTEST", buildGrid(s), true)
 				return
 			}
 			applyInput(&s, evt)
@@ -479,36 +497,103 @@ func buildGrid(s state) []sdk.Cell {
 		sdk.NumberCell(rOff+6, 1, "Unrealized", unrealizedPnL, 2, "$"),
 	)
 
-	// Trade log (last 8 trades).
+	// Trade log (last 8 trades) — Side / Price / Realized /
+	// Unrealized / Total. Realized is the PnL booked on each
+	// close trade. Unrealized is the open-position MTM at the
+	// trade's price relative to the prevailing entry — non-zero
+	// only on open rows (entries). Total is the running
+	// (cumulative realized + current unrealized) — what the
+	// trader's actual blotter would show after each fill.
 	tLogRow := rOff + 8
-	cells = append(cells, sdk.SectionCell(tLogRow, 0, "── TRADE LOG ──", 4))
+	cells = append(cells, sdk.SectionCell(tLogRow, 0, "── TRADE LOG ──", 5))
 	cells = append(cells,
 		sdk.Cell{Address: sdk.CellAddress{Row: tLogRow + 1, Col: 0}, Type: "text", Text: "Side", Style: &sdk.CellStyle{Bold: true, Fg: "dim"}},
 		sdk.Cell{Address: sdk.CellAddress{Row: tLogRow + 1, Col: 1}, Type: "text", Text: "Price", Style: &sdk.CellStyle{Bold: true, Fg: "dim"}},
-		sdk.Cell{Address: sdk.CellAddress{Row: tLogRow + 1, Col: 2}, Type: "text", Text: "PnL", Style: &sdk.CellStyle{Bold: true, Fg: "dim"}},
+		sdk.Cell{Address: sdk.CellAddress{Row: tLogRow + 1, Col: 2}, Type: "text", Text: "Realized", Style: &sdk.CellStyle{Bold: true, Fg: "dim"}},
+		sdk.Cell{Address: sdk.CellAddress{Row: tLogRow + 1, Col: 3}, Type: "text", Text: "Unreal", Style: &sdk.CellStyle{Bold: true, Fg: "dim"}},
+		sdk.Cell{Address: sdk.CellAddress{Row: tLogRow + 1, Col: 4}, Type: "text", Text: "Total", Style: &sdk.CellStyle{Bold: true, Fg: "dim"}},
 	)
 
-	start := 0
-	if len(s.trades) > 8 {
-		start = len(s.trades) - 8
+	// Walk every trade to compute the running cumulative — only
+	// the last 8 are rendered, but the running sum has to start
+	// from trade[0] to be correct.
+	cumRealized := 0.0
+	openSide := 0.0
+	openEntry := 0.0
+	type logRow struct {
+		side        string
+		price       float64
+		realized    float64
+		unrealized  float64
+		total       float64
+		hasRealized bool
 	}
-	for i, t := range s.trades[start:] {
+	rows := make([]logRow, 0, len(s.trades))
+	for _, t := range s.trades {
+		// Each trade is either a close (pnl != 0) or an open
+		// (pnl == 0). On a close, realized accumulates and the
+		// position is flat; on an open, position direction +
+		// entry are reset.
+		var lr logRow
+		lr.side = t.side
+		lr.price = t.price
+		if t.pnl != 0 {
+			cumRealized += t.pnl
+			lr.realized = t.pnl
+			lr.unrealized = 0
+			openSide = 0
+			openEntry = 0
+			lr.hasRealized = true
+		} else {
+			// Open. position direction inferred from side.
+			if t.side == "BUY" {
+				openSide = 1
+			} else {
+				openSide = -1
+			}
+			openEntry = t.price
+			// Unrealized at entry == 0 (position just opened),
+			// but as the trader sees the row, "unrealized" for
+			// the open leg starts as 0 and the next bar tells.
+			lr.realized = 0
+			lr.unrealized = (t.price - openEntry) * openSide // 0
+		}
+		lr.total = cumRealized + lr.unrealized
+		rows = append(rows, lr)
+	}
+
+	start := 0
+	if len(rows) > 8 {
+		start = len(rows) - 8
+	}
+	for i, lr := range rows[start:] {
 		row := tLogRow + 2 + uint32(i)
 		sideStyle := &sdk.CellStyle{Fg: "green"}
-		if t.side == "SELL" {
+		if lr.side == "SELL" {
 			sideStyle = &sdk.CellStyle{Fg: "red"}
 		}
 		cells = append(cells,
-			sdk.Cell{Address: sdk.CellAddress{Row: row, Col: 0}, Type: "text", Text: t.side, Style: sideStyle},
-			sdk.NumberCell(row, 1, "", t.price, 2, ""),
+			sdk.Cell{Address: sdk.CellAddress{Row: row, Col: 0}, Type: "text", Text: lr.side, Style: sideStyle},
+			sdk.NumberCell(row, 1, "", lr.price, 2, ""),
 		)
-		if t.pnl != 0 {
+		if lr.hasRealized {
 			delta := "up"
-			if t.pnl < 0 {
+			if lr.realized < 0 {
 				delta = "down"
 			}
-			cells = append(cells, sdk.NumberCellWithDelta(row, 2, "", t.pnl, 2, "$", delta))
+			cells = append(cells, sdk.NumberCellWithDelta(row, 2, "", lr.realized, 2, "$", delta))
 		}
+		// Unreal column — show 0 at entry (still meaningful as
+		// "position just opened, no MTM yet") rather than blank.
+		cells = append(cells, sdk.NumberCell(row, 3, "", lr.unrealized, 2, "$"))
+		// Total column. Color by sign for quick scanning.
+		totDelta := ""
+		if lr.total > 0 {
+			totDelta = "up"
+		} else if lr.total < 0 {
+			totDelta = "down"
+		}
+		cells = append(cells, sdk.NumberCellWithDelta(row, 4, "", lr.total, 2, "$", totDelta))
 	}
 
 	return cells
@@ -551,6 +636,26 @@ func btEnginePath() string {
 	return "bt-engine" // hope it's in PATH
 }
 
+// btEngineDuckDBPath resolves the DuckDB path the bt-engine should
+// read OHLC from. Override via BT_ENGINE_DUCKDB_PATH; default falls
+// back to the gpu-backtest sample DB so the operator can demo the
+// historical mode without populating their own data first.
+func btEngineDuckDBPath() string {
+	if p := os.Getenv("BT_ENGINE_DUCKDB_PATH"); p != "" {
+		return p
+	}
+	candidates := []string{
+		"../gpu-backtest/data/synth_oss.duckdb",
+		filepath.Join(os.Getenv("HOME"), "work/gpu-backtest/data/synth_oss.duckdb"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return "data/synth_oss.duckdb" // bt-engine resolves relative to its own cwd
+}
+
 // generateTOML creates a TOML config for bt-engine.
 func generateTOML(cfg config, strategyPath string) string {
 	return fmt.Sprintf(`[general]
@@ -560,6 +665,7 @@ end_time = "%s"
 mode = "ohlc"
 
 [data]
+duckdb_path = "%s"
 frequency = "1m"
 
 [strategy]
@@ -575,7 +681,7 @@ default_quantity = 0.01
 
 [output]
 json_summary = true
-`, cfg.ticker, cfg.startDate, cfg.endDate, strategyPath)
+`, cfg.ticker, cfg.startDate, cfg.endDate, btEngineDuckDBPath(), strategyPath)
 }
 
 // generateAriaStrategy creates an Aria strategy DSL file from parameters.
@@ -590,6 +696,32 @@ strategy sma_crossover {
     when trend_down -> sell(1.0)
 }
 `, cfg.fastPeriod, cfg.slowPeriod)
+}
+
+// parseBtEngineSummary parses bt-engine's `json_summary` payload into
+// the plugin's historicalResult. Extracted so unit tests can exercise
+// the parsing path without spawning the real bt-engine.
+func parseBtEngineSummary(output []byte) (historicalResult, error) {
+	var result struct {
+		Aggregate struct {
+			PnL         float64 `json:"pnl"`
+			Sharpe      float64 `json:"sharpe"`
+			MaxDrawdown float64 `json:"max_drawdown"`
+			NumTrades   int     `json:"num_trades"`
+			TotalVolume float64 `json:"total_volume"`
+		} `json:"aggregate"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return historicalResult{status: "error", errorMsg: "parse output: " + err.Error()}, err
+	}
+	return historicalResult{
+		status: "done",
+		pnl:    result.Aggregate.PnL,
+		sharpe: result.Aggregate.Sharpe,
+		maxDD:  result.Aggregate.MaxDrawdown,
+		trades: result.Aggregate.NumTrades,
+		volume: result.Aggregate.TotalVolume,
+	}, nil
 }
 
 // runHistoricalBacktest invokes bt-engine as a subprocess and returns results.
@@ -616,10 +748,24 @@ func runHistoricalBacktest(s *state) {
 	configFile.Close()
 	defer os.Remove(configFile.Name())
 
-	// Invoke bt-engine.
-	cmd := exec.Command(btEnginePath(), configFile.Name())
+	// Invoke bt-engine under a cancellable context so the input
+	// handler's cancel path can kill the subprocess mid-run.
+	// histCancel is cleared once the call returns.
+	ctx, cancel := context.WithCancel(context.Background())
+	s.histCancel = cancel
+	defer func() {
+		cancel()
+		s.histCancel = nil
+	}()
+	cmd := exec.CommandContext(ctx, btEnginePath(), configFile.Name())
 	output, err := cmd.Output()
 	if err != nil {
+		// Distinguish cancellation from a real failure so the UI
+		// shows the right terminal state.
+		if ctx.Err() == context.Canceled {
+			s.histResult = &historicalResult{status: "cancelled"}
+			return
+		}
 		stderr := ""
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			stderr = string(exitErr.Stderr)
@@ -631,27 +777,10 @@ func runHistoricalBacktest(s *state) {
 		return
 	}
 
-	// Parse JSON output.
-	var result struct {
-		Aggregate struct {
-			PnL         float64 `json:"pnl"`
-			Sharpe      float64 `json:"sharpe"`
-			MaxDrawdown float64 `json:"max_drawdown"`
-			NumTrades   int     `json:"num_trades"`
-			TotalVolume float64 `json:"total_volume"`
-		} `json:"aggregate"`
-	}
-	if err := json.Unmarshal(output, &result); err != nil {
-		s.histResult = &historicalResult{status: "error", errorMsg: "parse output: " + err.Error()}
+	parsed, err := parseBtEngineSummary(output)
+	if err != nil {
+		s.histResult = &parsed
 		return
 	}
-
-	s.histResult = &historicalResult{
-		status: "done",
-		pnl:    result.Aggregate.PnL,
-		sharpe: result.Aggregate.Sharpe,
-		maxDD:  result.Aggregate.MaxDrawdown,
-		trades: result.Aggregate.NumTrades,
-		volume: result.Aggregate.TotalVolume,
-	}
+	s.histResult = &parsed
 }

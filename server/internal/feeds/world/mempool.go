@@ -108,18 +108,23 @@ func (a *MempoolAdapter) fetch(ctx context.Context) {
 		},
 	})
 
-	// Fetch hashrate.
+	// Fetch hashrate. Bar is `Timeframe: "1d"` so anchor the timestamp
+	// at today's UTC open — `Timestamp: now` made the bar look like a
+	// late-day live tick instead of "the 1d bar that opened at 00:00
+	// UTC", which downstream consumers (sanity, DataRange replay) had
+	// no way to distinguish from a stale-but-marked-live datapoint.
 	hr, err := fetchJSON[mempoolHashrate](ctx, "https://mempool.space/api/v1/mining/hashrate/1d")
 	if err != nil {
 		slog.Debug("mempool hashrate error", "error", err)
 	} else {
+		dayOpen := now.UTC().Truncate(24 * time.Hour)
 		a.bus.Publish(bus.Message{
 			Topic: "indicator.btc_hashrate",
 			Payload: feeds.OHLC{
 				Instrument: "BTC_HASHRATE",
 				Exchange:   "mempool.space",
 				Timeframe:  "1d",
-				Timestamp:  now,
+				Timestamp:  dayOpen,
 				Close:      hr.CurrentHashrate,
 			},
 		})

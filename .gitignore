@@ -8,4 +8,37 @@ phone/.expo/
 phone/node_modules/
 dist/
 configs/secrets.enc
-configs
+# Top-level /configs/ is for local state only (secrets, generated
+# files). Anchor with a leading slash so the canonical
+# server/configs/*.yaml — which Makefile run-server reads from —
+# stays tracked.
+/configs
+.claude/*.lock
+
+# Personal watchlist — companies + RSS feeds the operator is tracking.
+# Loaded by the server next to its main config; tracked baseline lives
+# in server/configs/watchlist.example.yaml. Reset with
+# scripts/watchlist-reset.sh.
+server/configs/watchlist.yaml
+server/configs/watchlist.yaml.bak
+
+# Built plugin binaries — rebuild via `make` per plugin README.
+examples/plugins/*/bs-cli
+examples/plugins/*/formulettes-runner
+examples/plugins/*/hello-world
+examples/plugins/*/backtester
+examples/plugins/*/pricer
+examples/plugins/*/portfolio
+examples/plugins/*/monitor
+examples/plugins/*/voltools
+examples/plugins/*/oms
+examples/plugins/*/timeseries
+examples/plugins/*/optimizer
+examples/plugins/*/swaption
+
+# Rust build output for the Rust SDK + Rust example plugins.
+libs/pluginsdk-rs/target/
+examples/plugins/hello-rs/target/
+examples/plugins/*/Cargo.lock
+libs/pluginsdk-rs/Cargo.lock
+libs/pluginsdk-cpp/build/

@@ -1,15 +1,29 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Platform } from "react-native";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { colors, fonts, spacing, presets } from "../../src/theme";
-import { setConnection } from "../../src/connection";
+import { getServerUrl, getToken, setConnection } from "../../src/connection";
 
 // Default server URL — Android emulator uses 10.0.2.2 for host localhost.
 const DEFAULT_URL = Platform.OS === "android" ? "http://10.0.2.2:9474" : "http://localhost:9474";
 
 export default function SettingsScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ scanned?: string }>();
   const [serverUrl, setServerUrl] = useState(DEFAULT_URL);
   const [token, setToken] = useState("");
   const [status, setStatus] = useState("Not connected");
+
+  // After a QR scan, scan-qr.tsx persists via setConnection() and
+  // bounces here with ?scanned=1 — pull the freshly-stored values
+  // back into the form fields so the user can review + tap PAIR.
+  useEffect(() => {
+    if (params.scanned === "1") {
+      setServerUrl(getServerUrl());
+      setToken(getToken());
+      setStatus("Scanned QR — tap PAIR to verify the token.");
+    }
+  }, [params.scanned]);
 
   const testConnection = async () => {
     try {
@@ -79,6 +93,12 @@ export default function SettingsScreen() {
         </TouchableOpacity>
         <TouchableOpacity style={[presets.button, { marginLeft: spacing.sm }]} onPress={pair}>
           <Text style={presets.buttonText}>PAIR</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[presets.button, { marginLeft: spacing.sm, backgroundColor: "transparent", borderWidth: 1, borderColor: colors.amber }]}
+          onPress={() => router.push("/scan-qr")}
+        >
+          <Text style={[presets.buttonText, { color: colors.amber }]}>SCAN QR</Text>
         </TouchableOpacity>
       </View>
 

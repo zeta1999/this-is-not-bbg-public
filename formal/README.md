@@ -17,6 +17,10 @@
 | CreditsNonNeg | Credits never go negative |
 | NoDeadlock | System can always make progress |
 | RealtimeProgress | Realtime messages are eventually sent |
+| SwitchResetsBulkAndCredits | Mid-stream timeframe flip clears bulk + refreshes credits |
+| (ClientReconnect safety) | Client drop + reconnect resets queues and credits without deadlock |
+| CoalesceByKey cap + key-uniqueness | ≤1 buffered message per key; |buffer| ≤ cap (Phase 2) |
+| WALBoundedLoss | persistq ErrFull is the only writer-drop path (Phase 5) |
 
 ### Run Model Checker
 
@@ -35,7 +39,7 @@ tlc backpressure.tla -config backpressure.cfg
 ### Constants
 
 Small values for model checking (state space explosion with large values):
-- `MaxCredits = 4` (production: 512)
+- `MaxCredits = 4` (production: 1024)
 - `CreditRefill = 2` (production: 256)
 - `BulkBufSize = 6` (production: 8192)
 - `RealtimeBufSize = 4` (production: 1024)

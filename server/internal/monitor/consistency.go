@@ -66,8 +66,15 @@ func (cc *ConsistencyChecker) Run(ctx context.Context) error {
 }
 
 func (cc *ConsistencyChecker) updatePrice(msg bus.Message) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
+	// Reject historical replays — same rationale as sanity + alerts.
+	// Backfill coordinator republishes year-old bars on the live
+	// topic at startup; without this guard the divergence checker
+	// would compare a current binance mid against a year-old htx
+	// kline and fire spurious "binance vs htx differ by 30 %"
+	// alerts.
+	if feeds.IsHistoricalReplay(msg.Payload) {
+		return
+	}
 
 	var instrument, exchange string
 	var price float64
@@ -91,6 +98,14 @@ func (cc *ConsistencyChecker) updatePrice(msg bus.Message) {
 	}
 
 	if price == 0 {
+		return
+	}
+
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	// Don't let an out-of-order older arrival regress the venue's
+	// price to a stale value (slow REST poll racing a fast WS tick).
+	if existing, ok := cc.prices[instrument][exchange]; ok && !ts.IsZero() && !existing.Timestamp.IsZero() && ts.Before(existing.Timestamp) {
 		return
 	}
 

@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/feeds-config",
+  "$ref": "#/$defs/FeedsConfig",
+  "$defs": {
+    "DEXConfig": {
+      "properties": {
+        "uniswap": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "raydium": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "jupiter": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "hyperliquid": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "gmx": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "dydx": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "drift": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "serum": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "orca": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "pancakeswap": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "curve": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "uniswap",
+        "raydium",
+        "jupiter",
+        "hyperliquid",
+        "gmx",
+        "dydx",
+        "drift",
+        "serum",
+        "orca",
+        "pancakeswap",
+        "curve"
+      ]
+    },
+    "ExchangeConfig": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "feed_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rate_limit": {
+          "type": "integer"
+        },
+        "ws_endpoint": {
+          "type": "string"
+        },
+        "rest_base": {
+          "type": "string"
+        },
+        "backfill_days": {
+          "type": "integer"
+        },
+        "timeframes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "enabled",
+        "symbols",
+        "feed_types",
+        "rate_limit",
+        "ws_endpoint",
+        "rest_base",
+        "backfill_days",
+        "timeframes"
+      ]
+    },
+    "FeedSourceConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "cache_ttl": {
+          "type": "integer"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "poll_interval",
+        "cache_ttl"
+      ]
+    },
+    "FeedsConfig": {
+      "properties": {
+        "exchanges": {
+          "items": {
+            "$ref": "#/$defs/ExchangeConfig"
+          },
+          "type": "array"
+        },
+        "dex": {
+          "$ref": "#/$defs/DEXConfig"
+        },
+        "world": {
+          "$ref": "#/$defs/WorldFeedsConfig"
+        },
+        "rss": {
+          "$ref": "#/$defs/RSSConfig"
+        },
+        "sibelius": {
+          "$ref": "#/$defs/FileFeedConfig"
+        },
+        "ravel": {
+          "$ref": "#/$defs/FileFeedConfig"
+        },
+        "tsbase_files": {
+          "$ref": "#/$defs/FileFeedConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "exchanges",
+        "dex",
+        "world",
+        "rss"
+      ]
+    },
+    "FileFeedConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "topic_prefix": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "path",
+        "poll_interval"
+      ]
+    },
+    "RSSConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "feeds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "poll_interval",
+        "feeds"
+      ]
+    },
+    "WorldFeedsConfig": {
+      "properties": {
+        "yahoo_finance": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "coingecko": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "fred": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "eia": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "alternative_me": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        },
+        "mempool_space": {
+          "$ref": "#/$defs/FeedSourceConfig"
+        }
+      },
+      "type": "object",
+      "required": [
+        "yahoo_finance",
+        "coingecko",
+        "fred",
+        "eia",
+        "alternative_me",
+        "mempool_space"
+      ]
+    }
+  }
+}

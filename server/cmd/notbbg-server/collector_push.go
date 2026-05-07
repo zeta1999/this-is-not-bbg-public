@@ -122,7 +122,7 @@ func pushSession(ctx context.Context, addr, token string, isSession bool, msgBus
 	slog.Info("paired with collector", "addr", addr, "session", sessionID[:8])
 
 	// Subscribe to all topics on our bus.
-	sub := msgBus.Subscribe(8192, "ohlc.*.*", "lob.*.*", "trade.*.*", "news", "alert", "feed.status", "indicator.*", "perp.*.*")
+	sub := msgBus.Subscribe(8192, "ohlc.*.*", "lob.*.*", "trade.*.*", "news", "alert", "feed.status", "indicator.*", "perp.*.*", "liquidation.*.*")
 	defer msgBus.Unsubscribe(sub)
 
 	// Push loop.

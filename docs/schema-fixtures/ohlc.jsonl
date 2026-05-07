@@ -1,0 +1,2 @@
+{"instrument":"BTCUSDT","exchange":"binance","timeframe":"1m","timestamp":"2026-04-25T12:00:00Z","open":65000.5,"high":65100.0,"low":64900.0,"close":65050.25,"volume":12.345,"openDecimal":"65000.50","highDecimal":"65100.00","lowDecimal":"64900.00","closeDecimal":"65050.25","volumeDecimal":"12.345"}
+{"instrument":"ETHUSDT","exchange":"okx","timeframe":"5m","timestamp":"2026-04-25T12:05:00Z","open":3200.0,"high":3210.0,"low":3198.5,"close":3207.75,"volume":120.0}

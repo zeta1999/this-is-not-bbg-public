@@ -5,13 +5,9 @@ use (
 	./tui
 	./libs/pluginsdk
 	./examples/plugins/hello-world
-	./examples/plugins/pricer
 	./examples/plugins/backtester
-	./examples/plugins/portfolio
 	./examples/plugins/monitor
-	./examples/plugins/voltools
-	./examples/plugins/oms
-	./examples/plugins/timeseries
-	./examples/plugins/optimizer
-	./examples/plugins/swaption
+	./examples/plugins/formulettes-runner
+	./examples/plugins/ohlc-png
+	./examples/plugins/formula-demo
 )

@@ -1,14 +1,22 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useRef, useEffect } from "react";
 import { colors, fonts } from "../styles/theme";
 
 function getToken(): string {
   return new URLSearchParams(window.location.search).get("token") || "";
 }
 
-export const AgentPanel: React.FC = () => {
-  const [lines, setLines] = useState<string[]>(["Type a message and press Enter to ask Claude."]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+export interface AgentPanelProps {
+  lines: string[];
+  setLines: React.Dispatch<React.SetStateAction<string[]>>;
+  input: string;
+  setInput: React.Dispatch<React.SetStateAction<string>>;
+  loading: boolean;
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>;
+}
+
+export const AgentPanel: React.FC<AgentPanelProps> = ({
+  lines, setLines, input, setInput, loading, setLoading,
+}) => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "auto" }); }, [lines]);

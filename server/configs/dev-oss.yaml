@@ -1,0 +1,239 @@
+# dev-oss.yaml — server config for the OSS plugin cut.
+#
+# Goals (vs dev.yaml):
+#   - Most no-auth CEX venues on (binance + bitget/gateio/htx/mexc/okx/bybit)
+#     so cross-venue sanity has something to show; coinbase/kraken stay off
+#     because they want API keys for full coverage.
+#   - Three majors only (BTC/ETH/SOL) to keep memory + datalake size
+#     bounded for someone just trying it out — sanity still gets ≥6 venues
+#     per pair which is the point.
+#   - 7d backfill instead of 365d — fast first-launch, still enough
+#     history for the demo plugins (ohlc-png, monitor, formulettes).
+#   - Smaller cache + datalake budgets matching the reduced workload.
+#   - News and indices kept on (cheap REST/RSS, no auth needed).
+#
+# Switch to this with:  make run-server-oss
+# (or:                  ./bin/notbbg-server -config server/configs/dev-oss.yaml)
+#
+# Pair with the OSS plugin profile:  make plugins-oss
+
+server:
+  unix_socket: /tmp/notbbg.sock
+  tcp_addr: ":9473"
+  enable_tcp: false
+  http_addr: "127.0.0.1:9474"
+  enable_http: true
+
+feeds:
+  exchanges:
+    - name: binance
+      enabled: true
+      symbols:
+        - BTCUSDT
+        - ETHUSDT
+        - SOLUSDT
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+      rate_limit: 10
+      ws_endpoint: wss://stream.binance.com:9443/ws
+      rest_base: https://api.binance.com
+      backfill_days: 7
+      timeframes:
+        - 1m
+        - 5m
+        - 15m
+        - 1h
+        - 1d
+
+    # coinbase / kraken stay off — they want API keys for full feed coverage
+    # and the OSS preset is for fresh-clone first-launch with no creds.
+    - name: coinbase
+      enabled: false
+      symbols: [BTC-USD, ETH-USD]
+      feed_types: [ohlc, trades]
+      rate_limit: 5
+      ws_endpoint: wss://advanced-trade-ws.coinbase.com
+      rest_base: https://api.coinbase.com
+      backfill_days: 7
+      timeframes: [1m, 5m, 15m, 1h, 1d]
+    - name: kraken
+      enabled: false
+      symbols: [XBT/USD, ETH/USD]
+      feed_types: [ohlc, trades, orderbook]
+      rate_limit: 5
+      ws_endpoint: wss://ws.kraken.com
+      rest_base: https://api.kraken.com
+      backfill_days: 7
+      timeframes: [1m, 5m, 15m, 1h, 1d]
+
+    # Six no-auth CEX venues on so cross-venue sanity has the ≥6-venue
+    # quorum it needs. Three majors each (BTC/ETH/SOL) — same bounded
+    # footprint, much richer SANITY panel.
+    - name: okx
+      enabled: true
+      symbols: [BTC-USDT, ETH-USDT, SOL-USDT]
+      feed_types: [ohlc, trades, orderbook]
+      ws_endpoint: wss://ws.okx.com:8443/ws/v5/public
+    - name: bybit
+      enabled: true
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+      feed_types: [ohlc, trades, orderbook]
+      ws_endpoint: wss://stream.bybit.com/v5/public/spot
+    - name: bitget
+      enabled: true
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+      feed_types: [ohlc, trades, orderbook]
+      ws_endpoint: wss://ws.bitget.com/v2/ws/public
+    - name: gateio
+      enabled: true
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+      feed_types: [ohlc, trades, orderbook]
+      ws_endpoint: wss://api.gateio.ws/ws/v4/
+    - name: htx
+      enabled: true
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+      feed_types: [ohlc, trades, orderbook]
+      ws_endpoint: wss://api.huobi.pro/ws
+    - name: mexc
+      enabled: true
+      symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+      feed_types: [ohlc, trades]
+      rest_base: https://api.mexc.com
+
+  dex:
+    # Two no-auth DEX adapters on by default so the OSS preset still
+    # demonstrates the multi-source story (CEX + DEX side-by-side).
+    uniswap:
+      enabled: true
+      poll_interval: 30s
+      cache_ttl: 30s
+    hyperliquid:
+      enabled: true
+      poll_interval: 10s
+      cache_ttl: 10s
+    raydium:
+      enabled: false
+      poll_interval: 30s
+      cache_ttl: 30s
+    jupiter:
+      enabled: false
+      poll_interval: 30s
+      cache_ttl: 30s
+    gmx:
+      enabled: false
+      poll_interval: 30s
+      cache_ttl: 30s
+    dydx:
+      enabled: false
+      poll_interval: 30s
+      cache_ttl: 30s
+    drift:
+      enabled: false
+      poll_interval: 30s
+      cache_ttl: 30s
+    serum:
+      enabled: false
+      poll_interval: 30s
+      cache_ttl: 30s
+
+  world:
+    yahoo_finance:
+      enabled: true
+      poll_interval: 60s
+      cache_ttl: 5m
+    coingecko:
+      enabled: true
+      poll_interval: 60s
+      cache_ttl: 5m
+    fred:
+      enabled: false
+      poll_interval: 1h
+      cache_ttl: 24h
+    eia:
+      enabled: false
+      poll_interval: 15m
+      cache_ttl: 15m
+    alternative_me:
+      enabled: true
+      poll_interval: 5m
+      cache_ttl: 5m
+    mempool_space:
+      enabled: true
+      poll_interval: 60s
+      cache_ttl: 5m
+
+  rss:
+    # Trimmed feed list — major crypto + finance only. dev.yaml has
+    # the full set including Nitter/X mirrors which break often.
+    enabled: true
+    poll_interval: 5m
+    feeds:
+      - https://cointelegraph.com/rss
+      - https://www.coindesk.com/arc/outboundfeeds/rss/
+      - https://decrypt.co/feed
+      - https://www.theblock.co/rss.xml
+      - https://feeds.bloomberg.com/markets/news.rss
+      - https://www.ft.com/rss/home/us
+
+  # File-based adapters off in the OSS preset.
+  sibelius:
+    enabled: false
+    path: ""
+    poll_interval: 10s
+    topic_prefix: "sibelius."
+  ravel:
+    enabled: false
+    path: ""
+    poll_interval: 30s
+    topic_prefix: "ravel."
+  tsbase_files:
+    enabled: false
+    path: ""
+    poll_interval: 5s
+    topic_prefix: ""
+
+cache:
+  db_path: /tmp/notbbg-oss.db
+  eviction_interval: 1h
+  default_ttl: 24h
+  # Smaller cache for a try-out box.
+  max_size_mb: 128
+
+datalake:
+  enabled: true
+  path: /tmp/notbbg-oss-datalake
+  rotation: daily
+  compression: zstd
+  compress_topics:
+    - lob.*.*
+    - trade.*.*
+
+alerts:
+  consistency_threshold: 0.5
+  check_interval: 30s
+  sanity_interval: 5s
+  sanity_threshold_pct: 0.5
+  # Only the three majors enabled above need sanity tracking.
+  sanity_pairs:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BTC-USDT
+    - ETH-USDT
+    - SOL-USDT
+
+cron:
+  - name: cache-stats
+    schedule: "@every 5m"
+    action: log_stats
+    enabled: true
+  - name: cache-evict
+    schedule: "@every 1h"
+    action: cache_evict
+    enabled: true
+  - name: save-tokens
+    schedule: "@every 10m"
+    action: save_tokens
+    enabled: true

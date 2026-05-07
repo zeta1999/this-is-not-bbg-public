@@ -1,71 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, Modal } from "react-native";
 import { colors, fonts, spacing, presets } from "../../src/theme";
-import { getServerUrl, getToken, onConnectionChange } from "../../src/connection";
-
-interface LOBLevel { Price: number; Quantity: number; }
-interface LOBSnapshot {
-  Instrument: string;
-  Exchange: string;
-  Bids: LOBLevel[];
-  Asks: LOBLevel[];
-}
-
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-function useLOB() {
-  const [snapshots, setSnapshots] = useState<Map<string, LOBSnapshot>>(new Map());
-  const [connected, setConnected] = useState(false);
-  const [token, setToken] = useState(getToken());
-
-  useEffect(() => {
-    const unsub = onConnectionChange(() => setToken(getToken()));
-    return unsub;
-  }, []);
-
-  useEffect(() => {
-    if (!token) { setConnected(false); return; }
-    let active = true;
-
-    async function poll() {
-      while (active) {
-        try {
-          const url = getServerUrl();
-          const resp = await fetch(`${url}/api/v1/snapshot?topic=lob.*.*&mode=latest&token=${encodeURIComponent(token)}`);
-          if (!resp.ok) { setConnected(false); await sleep(5000); continue; }
-          const data = await resp.json();
-          if (!Array.isArray(data)) { await sleep(3000); continue; }
-
-          setConnected(true);
-          setSnapshots(() => {
-            const m = new Map<string, LOBSnapshot>();
-            for (const snap of data) {
-              const key = `${snap.Instrument}/${snap.Exchange}`;
-              m.set(key, snap);
-            }
-            return m;
-          });
-        } catch {
-          setConnected(false);
-        }
-        await sleep(3000);
-      }
-    }
-
-    poll();
-    return () => { active = false; };
-  }, [token]);
-
-  return { snapshots, connected };
-}
+import { useStore } from "../../src/store";
 
 export default function OrderBookScreen() {
-  const { snapshots, connected } = useLOB();
+  const { lobData: snapshots, lobKeys: keys, connected } = useStore();
   const [activeKey, setActiveKey] = useState("");
   const [search, setSearch] = useState("");
   const [showPicker, setShowPicker] = useState(false);
-
-  const keys = Array.from(snapshots.keys()).sort();
 
   // Auto-select first instrument if none selected.
   useEffect(() => {

@@ -101,6 +101,8 @@ func (a *BybitAdapter) connectAndStream(ctx context.Context) error {
 				args = append(args, "orderbook.25."+sym)
 			case "funding":
 				args = append(args, "tickers."+sym)
+			case "liquidations":
+				args = append(args, "allLiquidation."+sym)
 			}
 		}
 	}
@@ -175,6 +177,11 @@ func (a *BybitAdapter) processMessage(raw []byte) {
 		if len(parts) == 2 {
 			a.handleTrade(parts[1], msg.Data)
 		}
+	case strings.HasPrefix(msg.Topic, "allLiquidation."):
+		parts := strings.SplitN(msg.Topic, ".", 2)
+		if len(parts) == 2 {
+			a.handleLiquidations(parts[1], msg.Data)
+		}
 	case strings.HasPrefix(msg.Topic, "orderbook."):
 		parts := strings.SplitN(msg.Topic, ".", 3)
 		if len(parts) == 3 {
@@ -243,7 +250,9 @@ func (a *BybitAdapter) handleTrade(symbol string, data json.RawMessage) {
 				Instrument: symbol, Exchange: "bybit",
 				Timestamp: time.UnixMilli(ts),
 				Price: price, Quantity: qty, Side: side,
-				TradeID: t.ID,
+				TradeID:         t.ID,
+				PriceDecimal:    t.Price.String(),
+				QuantityDecimal: t.Size.String(),
 			},
 		})
 	}
@@ -263,14 +272,26 @@ func (a *BybitAdapter) handleBook(symbol string, data json.RawMessage) {
 		if len(b) < 2 { continue }
 		p, _ := strconv.ParseFloat(b[0], 64)
 		q, _ := strconv.ParseFloat(b[1], 64)
-		bids = append(bids, feeds.LOBLevel{Price: p, Quantity: q})
+		var n uint32
+		if len(b) >= 3 {
+			if v, err := strconv.ParseUint(b[2], 10, 32); err == nil {
+				n = uint32(v)
+			}
+		}
+		bids = append(bids, feeds.LOBLevel{Price: p, Quantity: q, OrderCount: n, PriceDecimal: b[0], QuantityDecimal: b[1]})
 	}
 	asks := make([]feeds.LOBLevel, 0, len(book.Asks))
 	for _, a_ := range book.Asks {
 		if len(a_) < 2 { continue }
 		p, _ := strconv.ParseFloat(a_[0], 64)
 		q, _ := strconv.ParseFloat(a_[1], 64)
-		asks = append(asks, feeds.LOBLevel{Price: p, Quantity: q})
+		var n uint32
+		if len(a_) >= 3 {
+			if v, err := strconv.ParseUint(a_[2], 10, 32); err == nil {
+				n = uint32(v)
+			}
+		}
+		asks = append(asks, feeds.LOBLevel{Price: p, Quantity: q, OrderCount: n, PriceDecimal: a_[0], QuantityDecimal: a_[1]})
 	}
 
 	a.bus.Publish(bus.Message{
@@ -301,11 +322,53 @@ func (a *BybitAdapter) handleTickers(symbol string, data json.RawMessage) {
 
 	a.bus.Publish(bus.Message{
 		Topic: fmt.Sprintf("perp.bybit.%s", symbol),
-		Payload: map[string]any{
-			"Instrument": symbol, "Exchange": "bybit", "Type": "funding",
-			"FundingRate": fr, "OpenInterest": oi,
-			"MarkPrice": mp, "IndexPrice": ip,
-			"NextFundingTime": time.UnixMilli(nft),
+		Payload: feeds.PerpetualSnapshot{
+			Instrument:       symbol,
+			Exchange:         "bybit",
+			Timestamp:        time.Now(),
+			FundingRate:      fr,
+			OpenInterestBase: oi,
+			MarkPrice:        mp,
+			IndexPrice:       ip,
+			NextFundingTime:  nft,
 		},
 	})
+}
+
+// handleLiquidations maps Bybit's allLiquidation.<symbol> frames to
+// the canonical LiquidationEvent stream. Bybit ships an array; we
+// emit one bus message per row. Side mapping mirrors the docs —
+// `B` / `Buy` means a short was forcibly closed (buy-to-cover) so
+// the taker side is "buy"; `S` / `Sell` = long liquidation.
+func (a *BybitAdapter) handleLiquidations(symbol string, data json.RawMessage) {
+	var liqs []struct {
+		T int64       `json:"T"` // ms timestamp
+		S string      `json:"S"` // side: "Buy"|"Sell" or "B"|"A"
+		V json.Number `json:"v"` // quantity
+		P json.Number `json:"p"` // price
+	}
+	if json.Unmarshal(data, &liqs) != nil {
+		return
+	}
+	for _, l := range liqs {
+		price, _ := l.P.Float64()
+		qty, _ := l.V.Float64()
+		side := "buy"
+		s := strings.ToUpper(l.S)
+		if s == "SELL" || s == "S" || s == "A" {
+			side = "sell"
+		}
+		a.bus.Publish(bus.Message{
+			Topic: fmt.Sprintf("liquidation.bybit.%s", symbol),
+			Payload: feeds.LiquidationEvent{
+				Instrument: symbol,
+				Exchange:   "bybit",
+				Timestamp:  time.UnixMilli(l.T),
+				Side:       side,
+				Price:      price,
+				Quantity:   qty,
+				Notional:   price * qty,
+			},
+		})
+	}
 }

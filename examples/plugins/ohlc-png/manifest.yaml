@@ -1,0 +1,11 @@
+name: ohlc-png
+command: .venv/bin/python
+args: ["main.py"]
+input_topics:
+  - "ohlc.binance.BTCUSDT"
+output_topics:
+  - "plugin.ohlc-png.screen"
+screens:
+  - id: "PLOT"
+    label: "OHLC PNG"
+    icon: "image-outline"

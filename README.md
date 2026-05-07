@@ -10,7 +10,7 @@
   <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows*-2ed573?style=flat-square" alt="platforms"></a>
   <a href="#"><img src="https://img.shields.io/badge/clients-TUI%20%7C%20Desktop%20%7C%20Phone-ff9d2b?style=flat-square" alt="clients"></a>
   <a href="#"><img src="https://img.shields.io/badge/crypto-ML--KEM--768%20%7C%20XChaCha20-6c5ce7?style=flat-square" alt="crypto"></a>
-  <a href="#"><img src="https://img.shields.io/badge/license-see%20LICENSE-lightgrey?style=flat-square" alt="license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="license"></a>
 </p>
 
 <p align="center">
@@ -30,20 +30,68 @@
 
 > **v0.2.0** — actively developed. Phone app is experimental. See [SPEC.md](SPEC.md) for the roadmap.
 
-> ⚠️ **Interim update — 2026-04-23.** `main` is ahead of the last
+> ⚠️ **Interim update — 2026-04-29.** `main` is ahead of the last
 > publicly-pushed commit by several in-flight tracks (adapter
 > wiring for Sibelius/Ravel/tsbase-files, HTTP `GetDataRange`
-> streaming, TUI progressive history, phone TRADES ANR fix,
-> Uniswap verification). These haven't gone through full manual
-> end-to-end testing across all three GUIs yet. If you need a
-> build that "just runs", check out the last published push at
-> commit [`289139c`](../../commit/289139c) (or `git checkout
-> 289139c`) — that's the last manually-verified release point.
-> See [STATUS.md](STATUS.md) for what's new on `HEAD` and
-> [TESTING.md](TESTING.md) §"What should work after 2026-04-23
-> tracks" for the manual-test procedure.
+> streaming, TUI progressive history, phone TRADES ANR fix +
+> modal picker, Uniswap verification, OHLC pipeline cleanup,
+> formulettes plugin REPL). These haven't gone through full
+> manual end-to-end testing across all three GUIs yet. If you
+> need a build that "just runs", check out the last published
+> push at commit [`289139c`](../../commit/289139c) (or
+> `git checkout 289139c`) — that's the last manually-verified
+> release point. See [STATUS.md](STATUS.md) for what's new on
+> `HEAD` and [TESTING.md](TESTING.md) for the manual-test
+> procedure.
 
 ![TUI OHLC](image/README/tui-ohlc.png)
+
+## What's New (2026-04)
+
+A run of recent work added several user-visible features. Screenshot
+placeholders below — capture each surface and drop the file at the
+indicated path.
+
+- **OHLC progressive backfill** — newest-first: a concurrent 2h
+  pass across all (symbol × timeframe) lands first, then a 365d
+  deep grind pages newest→oldest. Live (`ohlc.*`) and historical
+  (`ohlc-historical.*`) topics are split end-to-end so backfills
+  no longer corrupt the SANITY panel's "current mid".
+  → `image/README/tui-ohlc-backfill.png`
+- **TRADES panel** — per-instrument tape with VWAP / Volume /
+  Trades-per-second, virtualized rows, modal picker for
+  instrument + venue across all three clients.
+  → `image/README/tui-trades.png`,
+  `image/README/desktop-trades.png`,
+  `image/README/phone/trades.png`
+- **SANITY / consistency monitor** — staleness gate (>5min bars
+  rejected) + monotonic-timestamp guard prevent year-old
+  klines from clobbering the live mid; scrollable with j/k and
+  a `↕ N/M` indicator.
+  → `image/README/tui-sanity.png`,
+  `image/README/desktop-sanity.png`
+- **PLOT image cells** — plugin-rendered images surface in the
+  TUI's PLOT panel; `o` opens in default viewer, `y` copies the
+  filesystem path to the clipboard.
+  → `image/README/tui-plot.png`
+- **Formulettes plugin (FORM)** — long-lived `bs-cli --repl`
+  child for sub-millisecond Black-Scholes recompute, with a
+  5s heartbeat republish so the panel never reads "waiting for
+  data".
+  → `image/README/tui-form.png`,
+  `image/README/desktop-form.png`
+- **Phone TRADES modal picker** — replaces the old horizontal
+  ticker selector with a LOB-style modal showing instrument +
+  exchange and a search box. Fixes the "BTCUSDT collapsed across
+  three venues" regression.
+  → `image/README/phone/trades.png`,
+  `image/README/phone/trades-picker.png`
+- **Datalake event-time partitioning** — historical bars now
+  partition by event time, so a year-old kline written today
+  lands in `year=2025/month=05/...` rather than
+  `year=2026/...`. DataRange queries return real history.
+  → `image/README/datalake-tree.png` *(optional: terminal
+  screenshot of `tree datalake/` showing year-spanning partitions)*
 
 ## What's Inside
 
@@ -55,7 +103,7 @@ Every client talks to the same Go server, so panels stay in sync across devices.
 |--------|-------|-----------|-------|
 | **TUI** | Go + Bubbletea + Lipgloss | Unix socket | 7 panels, embedded Claude agent, full keyboard |
 | **Desktop** | Electron + React 19 + Vite | HTTP / SSE | 1:1 port of TUI logic, TradingView charts |
-| **Phone** | React Native + Expo | HTTP polling | Experimental, read-only, QR-pair from TUI |
+| **Phone** | React Native + Expo | HTTP / SSE | Read-only, sub-second updates via SSE, QR-pair from TUI |
 
 ### Data Feeds
 
@@ -119,28 +167,119 @@ Verify before continuing: `go version` (need 1.25+) and `node --version` (need v
 
 ## Quick Start
 
+One command per surface — pick what you want to look at.
+
 ```bash
-# Build everything (server + TUI + collector)
+# Build everything (server + TUI + collector).
 make build
 
-# Run TUI (auto-starts server)
-./bin/notbbg
+# Terminal 1 — server (foreground; Ctrl-C to stop).
+make run-server
 
-# Run with desktop GUI
-./scripts/local-test-desktop.sh
+# Terminal 2 — pick one of:
+make run-tui          # bubbletea TUI
+make run-desktop      # Electron + React
+make run-phone        # Expo dev server (press 'a'/'i' for Android/iOS)
 
-# Run with remote collector backup
-./scripts/local-test.sh
+# Health probe (server must be up).
+make smoke
 ```
 
-### Phone App (experimental)
+### OSS / fresh-clone bootstrap
+
+For a lightweight cut that boots cleanly without API keys (binance +
+free DEX adapters, 3 majors, 7d backfill, demo plugins only):
 
 ```bash
-make phone-install    # Install deps
-make phone-dev        # Start Expo dev server (press 'a' for Android, 'i' for iOS)
+make build
+make plugins-oss      # deploy SDK demos + formulettes + monitor + ohlc-png
+make run-server-oss   # uses server/configs/dev-oss.yaml
+# (or:  make oss-bootstrap   — does both back-to-back)
 ```
 
-Pair the phone via TUI `/PAIR`, the desktop pairing modal, or `cat /tmp/notbbg-phone.token`. See [PHONE-TESTING.md](PHONE-TESTING.md).
+The OSS profile lives at `scripts/plugin-profiles/oss.txt`; the
+matching server config lives at `server/configs/dev-oss.yaml`. Switch
+back to the full setup any time with `make plugins-full && make
+run-server`.
+
+### Phone pairing
+
+The phone reads its session token from the server. With the
+server up, run `cat /tmp/notbbg-phone.token` and paste the
+output into Settings → TOKEN inside the Expo app. (Or scan the
+QR code from `http://localhost:9474/api/v1/pair/qr`.)
+
+On a fresh install the phone redirects to Settings on launch
+until a token is stored. After pairing it lands on Watchlist
+with a "LIVE — last update Ns ago" indicator showing real-time
+freshness.
+
+### Common gotchas
+
+#### "Password for collector localhost:9473:" prompt on TUI launch
+
+The TUI is asking for the **vault password** — the one you used
+with `notbbg-collector -init-secrets` (or
+`notbbg-server -init-secrets`). It's needed to decrypt a
+previously-paired collector token stored in
+`~/.config/notbbg/config.yaml`.
+
+The collector is **optional** — it's the remote-backup component
+that mirrors the bus to a remote machine's datalake over PQC TLS.
+Most users running everything locally don't need it.
+
+Three ways through the prompt:
+
+1. **Type the vault password** (whatever you set with
+   `-init-secrets`). The TUI then connects to both the local
+   server and pushes a copy to the collector.
+2. **Bypass via env var:** `NOTBBG_PASSWORD='<pwd>' make run-tui`.
+3. **Drop the collector pairing** (clean slate, no remote
+   backup):
+   ```bash
+   cp ~/.config/notbbg/config.yaml ~/.config/notbbg/config.yaml.bak
+   python3 -c "
+   import yaml; p='$HOME/.config/notbbg/config.yaml'
+   c=yaml.safe_load(open(p)) or {}
+   c.setdefault('server',{}).pop('collector_addr',None)
+   c.setdefault('server',{}).pop('collector_token',None)
+   open(p,'w').write(yaml.dump(c))
+   "
+   ```
+   The TUI now skips the prompt and connects only to the local
+   server. Re-pair later with
+   `./bin/notbbg pair-collector <host>:9473 <token>`.
+
+#### "Is the collector running?" — checking
+
+```bash
+# port test
+nc -z localhost 9473 && echo open || echo closed
+# process test
+pgrep -fl notbbg-collector
+```
+
+If you actually want it running:
+```bash
+# one-time vault init (asks for a password to remember)
+./bin/notbbg-collector -init-secrets -enc-config /tmp/collector-secrets.enc
+
+# generate + start (token + password env vars)
+TOKEN=$(./bin/notbbg-collector -config server/configs/collector-local.yaml -pair 2>/dev/null \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+NOTBBG_TOKEN=$TOKEN NOTBBG_PASSWORD='<vault-pwd>' \
+  ./bin/notbbg-collector -config server/configs/collector-local.yaml \
+    -enc-config /tmp/collector-secrets.enc &
+```
+
+#### TLS handshake fails with `make smoke` on macOS
+
+The macOS system curl ships with LibreSSL/3.3.6 which can't
+negotiate against the server's self-signed TLS 1.3 cert. The
+target falls back to `/opt/homebrew/opt/curl/bin/curl` (OpenSSL)
+and finally a bare `nc -z` port check, so you'll always get a
+useful answer. The actual GUIs (Electron Chromium, react-native-sse,
+TUI's own Go TLS stack) handle the handshake fine.
 
 ## Screenshots
 
@@ -152,17 +291,37 @@ Pair the phone via TUI `/PAIR`, the desktop pairing modal, or `cat /tmp/notbbg-p
 | **Article Detail** | **Feed Monitor** | **Phone Pairing** |
 | ![](image/README/tui-news-2.png) | ![](image/README/tui-mon.png) | ![](image/README/tui-pair.png) |
 
+**New in 2026-04** *(placeholders — capture and drop in at these paths)*:
+
+| Trades Tape | Sanity / Consistency | OHLC Backfill |
+|---|---|---|
+| ![](image/README/tui-trades.png) | ![](image/README/tui-sanity.png) | ![](image/README/tui-ohlc-backfill.png) |
+| **PLOT Image Cells** | **Formulettes (FORM)** | **Scroll Indicator** |
+| ![](image/README/tui-plot.png) | ![](image/README/tui-form.png) | ![](image/README/tui-scroll.png) |
+
 ### Desktop (Electron)
 
 | OHLC | LOB | News | Pairing |
 |---|---|---|---|
 | ![](image/README/desktop-ohlc.png) | ![](image/README/desktop-lob.png) | ![](image/README/desktop-news.png) | ![](image/README/desktop-pair.png) |
 
+**New in 2026-04** *(placeholders)*:
+
+| Trades Tape | Sanity / Consistency | Formulettes (FORM) | OHLC Streaming History |
+|---|---|---|---|
+| ![](image/README/desktop-trades.png) | ![](image/README/desktop-sanity.png) | ![](image/README/desktop-form.png) | ![](image/README/desktop-ohlc-history.png) |
+
 ### Phone (React Native, experimental)
 
 | Watchlist | LOB | News (BM25) | Settings |
 |---|---|---|---|
 | ![](image/README/phone/watchlist.png) | ![](image/README/phone/lob.png) | ![](image/README/phone/news.png) | ![](image/README/phone/settings.png) |
+
+**New in 2026-04** *(placeholders)*:
+
+| Trades (modal picker) | Trades — Picker Open | OHLC | Sanity |
+|---|---|---|---|
+| ![](image/README/phone/trades.png) | ![](image/README/phone/trades-picker.png) | ![](image/README/phone/ohlc.png) | ![](image/README/phone/sanity.png) |
 
 ## Architecture
 
@@ -286,4 +445,4 @@ docs/             Data update playbook, per-dataset audits, protocol notes
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+Apache License 2.0 — see [LICENSE](LICENSE) for the full text.

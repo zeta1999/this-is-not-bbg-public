@@ -94,6 +94,80 @@ func TestWriter_ProtoPayloadRoundTrips(t *testing.T) {
 	}
 }
 
+// TestWriter_ZstdCompressionRoundTrip asserts that a topic matching
+// CompressTopics lands in a .jsonl.zst file and the Reader decodes
+// it back into the original record. Topics that do NOT match the
+// allowlist must still write to plain .jsonl, proving the match is
+// selective (no blanket compression).
+func TestWriter_ZstdCompressionRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	b := bus.New(8)
+	w := New(b, Config{
+		Path:           root,
+		Enabled:        true,
+		Topics:         []string{"lob.*.*", "ohlc.*.*"},
+		Compression:    "zstd",
+		CompressTopics: []string{"lob.*.*"},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = w.Run(ctx); close(done) }()
+	time.Sleep(50 * time.Millisecond)
+
+	// One compressed topic (lob), one plain topic (ohlc).
+	b.Publish(bus.Message{
+		Topic:   "lob.binance.BTCUSDT",
+		Payload: map[string]any{"side": "bid", "px": 60000.0, "qty": 1.5},
+	})
+	b.Publish(bus.Message{
+		Topic:   "ohlc.binance.BTCUSDT",
+		Payload: map[string]any{"close": 60001.0},
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	cancel() // triggers closeAll() — critical for zstd frame flush
+	<-done
+
+	// lob.* must land in .jsonl.zst; ohlc.* in plain .jsonl.
+	var zstFound, plainFound string
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		switch {
+		case strings.HasSuffix(path, "data.jsonl.zst") && strings.Contains(path, "type=lob"):
+			zstFound = path
+		case strings.HasSuffix(path, "data.jsonl") && strings.Contains(path, "type=ohlc"):
+			plainFound = path
+		}
+		return nil
+	})
+	if zstFound == "" {
+		t.Fatalf("no data.jsonl.zst under %s (expected for lob.*)", root)
+	}
+	if plainFound == "" {
+		t.Fatalf("no data.jsonl under %s (expected for ohlc.*, unchanged)", root)
+	}
+
+	// Reader round-trips the compressed file.
+	rd := NewReader(root)
+	recs, err := rd.Query("lob", "binance", "BTCUSDT",
+		time.Now().Add(-24*time.Hour), time.Now().Add(24*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("reader query: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 lob record, got %d", len(recs))
+	}
+	if recs[0].Topic != "lob.binance.BTCUSDT" {
+		t.Errorf("topic: got %q", recs[0].Topic)
+	}
+	if !strings.Contains(string(recs[0].Payload), `"px":60000`) {
+		t.Errorf("payload missing: %s", string(recs[0].Payload))
+	}
+}
+
 // TestWriter_NonProtoPayloadStillWrites asserts that non-proto
 // payloads (plain maps / strings) don't break the writer.
 func TestWriter_NonProtoPayloadStillWrites(t *testing.T) {

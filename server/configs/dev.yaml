@@ -1,0 +1,391 @@
+server:
+  unix_socket: /tmp/notbbg.sock
+  tcp_addr: ":9473"
+  enable_tcp: false
+  http_addr: "127.0.0.1:9474"
+  enable_http: true
+
+feeds:
+  exchanges:
+    - name: binance
+      enabled: true
+      symbols:
+        - BTCUSDT
+        - ETHUSDT
+        - SOLUSDT
+        - BNBUSDT
+        - XRPUSDT
+        - ADAUSDT
+        - DOGEUSDT
+        - AVAXUSDT
+        - LINKUSDT
+        - DOTUSDT
+        - MATICUSDT
+        - LTCUSDT
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+      rate_limit: 10
+      ws_endpoint: wss://stream.binance.com:9443/ws
+      rest_base: https://api.binance.com
+      backfill_days: 365
+      timeframes:
+        - 1m
+        - 5m
+        - 15m
+        - 30m
+        - 1h
+        - 4h
+        - 1d
+        - 1w
+
+    - name: coinbase
+      enabled: false
+      symbols:
+        - BTC-USD
+        - ETH-USD
+      feed_types:
+        - ohlc
+        - trades
+      rate_limit: 5
+      ws_endpoint: wss://advanced-trade-ws.coinbase.com
+      rest_base: https://api.coinbase.com
+      backfill_days: 365
+      timeframes:
+        - 1m
+        - 5m
+        - 15m
+        - 1h
+        - 6h
+        - 1d
+
+    - name: kraken
+      enabled: false
+      symbols:
+        - XBT/USD
+        - ETH/USD
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+      rate_limit: 5
+      ws_endpoint: wss://ws.kraken.com
+      rest_base: https://api.kraken.com
+      backfill_days: 365
+      timeframes:
+        - 1m
+        - 5m
+        - 15m
+        - 1h
+        - 4h
+        - 1d
+        - 1w
+
+    - name: okx
+      enabled: true
+      symbols:
+        - BTC-USDT
+        - ETH-USDT
+        - SOL-USDT
+        - BNB-USDT
+        - XRP-USDT
+        - ADA-USDT
+        - DOGE-USDT
+        - AVAX-USDT
+        - LINK-USDT
+        - DOT-USDT
+        - MATIC-USDT
+        - LTC-USDT
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+        - funding
+      ws_endpoint: wss://ws.okx.com:8443/ws/v5/public
+
+    - name: bybit
+      enabled: true
+      symbols:
+        - BTCUSDT
+        - ETHUSDT
+        - SOLUSDT
+        - BNBUSDT
+        - XRPUSDT
+        - ADAUSDT
+        - DOGEUSDT
+        - AVAXUSDT
+        - LINKUSDT
+        - DOTUSDT
+        - MATICUSDT
+        - LTCUSDT
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+        - funding
+      ws_endpoint: wss://stream.bybit.com/v5/public/spot
+
+    - name: bitget
+      enabled: true
+      symbols:
+        - BTCUSDT
+        - ETHUSDT
+        - SOLUSDT
+        - BNBUSDT
+        - XRPUSDT
+        - ADAUSDT
+        - DOGEUSDT
+        - AVAXUSDT
+        - LINKUSDT
+        - DOTUSDT
+        - MATICUSDT
+        - LTCUSDT
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+      ws_endpoint: wss://ws.bitget.com/v2/ws/public
+
+    - name: gateio
+      enabled: true
+      symbols:
+        - BTCUSDT
+        - ETHUSDT
+        - SOLUSDT
+        - BNBUSDT
+        - XRPUSDT
+        - ADAUSDT
+        - DOGEUSDT
+        - AVAXUSDT
+        - LINKUSDT
+        - DOTUSDT
+        - MATICUSDT
+        - LTCUSDT
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+      ws_endpoint: wss://api.gateio.ws/ws/v4/
+
+    - name: htx
+      enabled: true
+      symbols:
+        - BTCUSDT
+        - ETHUSDT
+        - SOLUSDT
+        - BNBUSDT
+        - XRPUSDT
+        - ADAUSDT
+        - DOGEUSDT
+        - AVAXUSDT
+        - LINKUSDT
+        - DOTUSDT
+        - MATICUSDT
+        - LTCUSDT
+      feed_types:
+        - ohlc
+        - trades
+        - orderbook
+      ws_endpoint: wss://api.huobi.pro/ws
+
+    - name: mexc
+      enabled: true
+      symbols:
+        - BTCUSDT
+        - ETHUSDT
+        - SOLUSDT
+        - BNBUSDT
+        - XRPUSDT
+        - ADAUSDT
+        - DOGEUSDT
+        - AVAXUSDT
+        - LINKUSDT
+        - DOTUSDT
+        - MATICUSDT
+        - LTCUSDT
+      feed_types:
+        - ohlc
+        - trades
+      rest_base: https://api.mexc.com
+
+  dex:
+    uniswap:
+      enabled: true
+      poll_interval: 15s
+      cache_ttl: 15s
+    raydium:
+      enabled: true
+      poll_interval: 15s
+      cache_ttl: 15s
+    jupiter:
+      enabled: true
+      poll_interval: 10s
+      cache_ttl: 10s
+    hyperliquid:
+      enabled: true
+      poll_interval: 5s
+      cache_ttl: 5s
+    gmx:
+      enabled: true
+      poll_interval: 30s
+      cache_ttl: 30s
+    dydx:
+      enabled: true
+      poll_interval: 30s
+      cache_ttl: 30s
+    drift:
+      enabled: true
+      poll_interval: 30s
+      cache_ttl: 30s
+    serum:
+      enabled: true
+      poll_interval: 30s
+      cache_ttl: 30s
+
+  world:
+    yahoo_finance:
+      enabled: true
+      poll_interval: 60s
+      cache_ttl: 5m
+    coingecko:
+      enabled: true
+      poll_interval: 30s
+      cache_ttl: 2m
+    fred:
+      enabled: false
+      poll_interval: 1h
+      cache_ttl: 24h
+    eia:
+      enabled: false
+      poll_interval: 15m
+      cache_ttl: 15m
+    alternative_me:
+      enabled: true
+      poll_interval: 5m
+      cache_ttl: 5m
+    mempool_space:
+      enabled: true
+      poll_interval: 60s
+      cache_ttl: 5m
+
+  rss:
+    enabled: true
+    poll_interval: 2m
+    feeds:
+      # Crypto news
+      - https://cointelegraph.com/rss
+      - https://www.coindesk.com/arc/outboundfeeds/rss/
+      - https://decrypt.co/feed
+      - https://bitcoinmagazine.com/.rss/full/
+      - https://www.theblock.co/rss.xml
+      - https://www.dlnews.com/rss/
+      - https://blockworks.co/feed
+      # Finance / macro
+      - https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^DJI,^IXIC&region=US&lang=en-US
+      - https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114
+      - https://feeds.bloomberg.com/markets/news.rss
+      - https://www.ft.com/rss/home/us
+      # Tech / general
+      - https://techcrunch.com/feed/
+      - https://www.wired.com/feed/rss
+      # X.com / Twitter via Nitter RSS (key accounts)
+      - https://nitter.privacydev.net/elonmusk/rss
+      - https://nitter.privacydev.net/VitalikButerin/rss
+      - https://nitter.privacydev.net/CryptoHayes/rss
+      - https://nitter.privacydev.net/cabornebueno/rss
+      - https://nitter.privacydev.net/inversebrah/rss
+      - https://nitter.privacydev.net/DefiIgnas/rss
+      - https://nitter.privacydev.net/coabornebueno/rss
+
+  # File-based feed adapters — disabled by default. Point `path` at a
+  # directory of Sibelius aria_*.json / Ravel snapshots / ts-base
+  # CSV+JSONL output, flip `enabled: true`, and the feed manager will
+  # tail + publish to bus topics under `topic_prefix`.
+  sibelius:
+    enabled: false
+    path: ""
+    poll_interval: 10s
+    topic_prefix: "sibelius."
+  ravel:
+    enabled: false
+    path: ""
+    poll_interval: 30s
+    topic_prefix: "ravel."
+  tsbase_files:
+    enabled: false
+    path: ""
+    poll_interval: 5s
+    topic_prefix: ""
+
+cache:
+  db_path: /tmp/notbbg.db
+  eviction_interval: 1h
+  default_ttl: 24h
+  max_size_mb: 512
+
+datalake:
+  enabled: true
+  path: /tmp/notbbg-datalake
+  rotation: daily
+  # zstd-compress only the high-volume partitions. OHLC/news stay
+  # plain JSONL for quick manual inspection. Reader transparently
+  # decompresses .jsonl.zst files, so history + datarange work
+  # against either suffix.
+  compression: zstd
+  compress_topics:
+    - lob.*.*
+    - trade.*.*
+    - perp.*.*
+
+alerts:
+  consistency_threshold: 0.5
+  check_interval: 30s
+  sanity_interval: 5s
+  sanity_threshold_pct: 0.5
+  # Sanity pairs are matched against the raw Instrument string the
+  # feed publishes, so each venue's naming convention has to be
+  # listed separately (binance/bybit/etc. publish "BTCUSDT", OKX
+  # publishes "BTC-USDT"). Cross-venue median is computed across
+  # whichever venues report the same instrument string — so adding
+  # both naming forms widens the venue coverage automatically.
+  sanity_pairs:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - ADAUSDT
+    - DOGEUSDT
+    - AVAXUSDT
+    - LINKUSDT
+    - DOTUSDT
+    - MATICUSDT
+    - LTCUSDT
+    # OKX naming variants (dashed)
+    - BTC-USDT
+    - ETH-USDT
+    - SOL-USDT
+    - BNB-USDT
+    - XRP-USDT
+    - ADA-USDT
+    - DOGE-USDT
+    - AVAX-USDT
+    - LINK-USDT
+    - DOT-USDT
+    - MATIC-USDT
+    - LTC-USDT
+
+cron:
+  - name: cache-stats
+    schedule: "@every 5m"
+    action: log_stats
+    enabled: true
+  - name: cache-evict
+    schedule: "@every 1h"
+    action: cache_evict
+    enabled: true
+  - name: save-tokens
+    schedule: "@every 10m"
+    action: save_tokens
+    enabled: true

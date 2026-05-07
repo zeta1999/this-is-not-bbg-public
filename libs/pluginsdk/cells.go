@@ -33,7 +33,7 @@ type EnumOption struct {
 type Cell struct {
 	Address CellAddress `json:"address"`
 	Style   *CellStyle  `json:"style,omitempty"`
-	Type    string      `json:"type"` // "text", "input_decimal", "input_integer", "input_string", "input_enum", "input_selection", "number", "formula", "component"
+	Type    string      `json:"type"` // "text", "input_decimal", "input_integer", "input_string", "input_enum", "input_selection", "input_script", "number", "formula", "component", "chart", "table", "image"
 
 	// Text content (type=text)
 	Text string `json:"text,omitempty"`
@@ -63,6 +63,45 @@ type Cell struct {
 	VisibleWhen string `json:"visible_when,omitempty"` // "R0C3=Barrier"
 	ColSpan     uint32 `json:"col_span,omitempty"`
 	RowSpan     uint32 `json:"row_span,omitempty"`
+
+	// Chart (type=chart). One or more series rendered inline. TUI
+	// renders as an ASCII sparkline per series; desktop as Lightweight
+	// Charts lines; phone as an SVG polyline. Keep series counts
+	// small (≤4) so the cell stays readable without scrolling.
+	Series []ChartSeries `json:"series,omitempty"`
+
+	// Table (type=table). Columnar layout inside a single cell.
+	// Renderers clip or scroll as needed; the SDK does not enforce a
+	// max row count, but plugins should keep it well under the
+	// panel height.
+	Columns []TableColumn `json:"columns,omitempty"`
+	Rows    [][]string    `json:"rows,omitempty"`
+
+	// Image (type=image). Src is an http(s):// URL OR a NOTBBG:/path
+	// reference that a client resolves locally; Alt is shown when the
+	// image fails to load or the client cannot render images inline
+	// (e.g. the TUI, which prints `[IMG alt]` + offers an open
+	// shortcut). Width/Height in pixels are hints; renderers may
+	// clamp to their own layout.
+	Src    string `json:"src,omitempty"`
+	Alt    string `json:"alt,omitempty"`
+	Width  uint32 `json:"width,omitempty"`
+	Height uint32 `json:"height,omitempty"`
+}
+
+// ChartSeries is one line/bar series in a ChartCell.
+type ChartSeries struct {
+	Name   string    `json:"name,omitempty"`
+	Values []float64 `json:"values"`
+	Kind   string    `json:"kind,omitempty"` // "line" (default), "bar", "area"
+	Color  string    `json:"color,omitempty"` // named color (green/red/amber/cyan) or hex
+}
+
+// TableColumn describes a column in a TableCell.
+type TableColumn struct {
+	Header string `json:"header"`
+	Width  uint32 `json:"width,omitempty"`  // preferred width in characters; 0 = auto
+	Align  string `json:"align,omitempty"`  // "left" (default), "right", "center"
 }
 
 // CellGridUpdate is the payload for a cell grid screen update.
@@ -73,12 +112,27 @@ type CellGridUpdate struct {
 	Version     string `json:"version"` // "cellgrid/v1" — distinguishes from legacy StyledLine
 }
 
-// InputEvent is received from the GUI when a user changes an input cell.
+// InputEvent is received from the GUI when a user interacts with an
+// input cell OR when a control event (e.g. job cancel) is routed to
+// the plugin. Kind discriminates; empty string defaults to "edit"
+// for backward compatibility with pre-2026-04-25 plugins.
+//
+//   Kind == ""       — cell edit; Address + Value populated.
+//   Kind == "edit"   — cell edit (explicit); same fields.
+//   Kind == "cancel" — operator requested cancellation of JobID.
+//                      Address / Value are empty.
 type InputEvent struct {
+	Kind     string      `json:"kind,omitempty"`
 	ScreenID string      `json:"screen_id"`
-	Address  CellAddress `json:"address"`
-	Value    any         `json:"value"` // float64, int64, or string
+	Address  CellAddress `json:"address,omitempty"`
+	Value    any         `json:"value,omitempty"`
+	JobID    string      `json:"job_id,omitempty"`
 }
+
+// IsCancel reports whether the event asks the plugin to cancel a
+// running job (rather than apply a cell edit). Convenience around
+// the Kind string so plugin authors don't hard-code the constant.
+func (e InputEvent) IsCancel() bool { return e.Kind == "cancel" }
 
 // ---------------------------------------------------------------------------
 // Builder helpers — fluent API for constructing cells.
@@ -294,5 +348,59 @@ func CellStringValue(v any) string {
 		return fmt.Sprintf("%g", val)
 	default:
 		return fmt.Sprintf("%v", val)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Chart + Table cell builders (plugin Phase 2.4).
+// ---------------------------------------------------------------------------
+
+// ChartCell creates a chart cell with one or more series. Typical
+// use is a single sparkline:
+//
+//	ChartCell(row, col, "PnL", []ChartSeries{{Values: pnlPoints}})
+//
+// Multiple series share the x-axis; series[i].Values[j] is aligned
+// with series[0].Values[j].
+func ChartCell(row, col uint32, label string, series []ChartSeries) Cell {
+	return Cell{
+		Address: CellAddress{Row: row, Col: col},
+		Type:    "chart",
+		Label:   label,
+		Series:  series,
+	}
+}
+
+// LineSeries is a small convenience constructor for a single-line
+// series, the most common shape.
+func LineSeries(name string, values []float64) ChartSeries {
+	return ChartSeries{Name: name, Values: values, Kind: "line"}
+}
+
+// TableCell creates a table cell with a column header row and N data
+// rows. Cell rendering is clip-on-overflow by default; renderers
+// may choose to scroll or truncate based on column widths.
+func TableCell(row, col uint32, label string, columns []TableColumn, rows [][]string) Cell {
+	return Cell{
+		Address: CellAddress{Row: row, Col: col},
+		Type:    "table",
+		Label:   label,
+		Columns: columns,
+		Rows:    rows,
+	}
+}
+
+// ImageCell creates an image cell. Src can be an http(s):// URL or a
+// `NOTBBG:/abs/path` reference the client resolves to a local file.
+// Alt is shown in non-graphical clients (TUI) and when loading
+// fails. Width/Height (pixels) are hints — renderers may clamp.
+func ImageCell(row, col uint32, src, alt string, width, height uint32) Cell {
+	return Cell{
+		Address: CellAddress{Row: row, Col: col},
+		Type:    "image",
+		Src:    src,
+		Alt:    alt,
+		Width:  width,
+		Height: height,
 	}
 }

@@ -1,0 +1,46 @@
+# watchlist.example.yaml — sanitized default for the OSS / demo cut.
+#
+# This file is the public, non-revealing baseline that ships with the
+# repo. The server actually loads `watchlist.yaml` (gitignored) from
+# the same directory. To start a personal watchlist, copy this file
+# to watchlist.yaml and edit; to wipe a personal watchlist back to
+# the safe default, run `./scripts/watchlist-reset.sh`.
+#
+# Mega-cap US tech only — these are the most-tracked tickers on the
+# planet and reveal nothing about an operator's actual trading
+# preferences, sectors of interest, or geographic bias.
+#
+# Schema:
+#   companies:
+#     - name:      human-readable name
+#       ticker:    bare ticker as it appears in IR / press
+#       yahoo:     Yahoo Finance symbol (with exchange suffix when
+#                  the bare ticker is ambiguous: 6324.T, 035420.KS,
+#                  9880.HK, MTRS.ST, NG.L, IBE.MC, RWE.DE, 688256.SS)
+#       theme:     optional grouping label (free text)
+#       news_feeds: list of RSS URLs scoped to this company. Defaults
+#                  to a Google News query — works for any ticker but
+#                  is noisy. Replace with a curated IR / vendor RSS
+#                  when you have one.
+
+companies:
+  - name: Apple
+    ticker: AAPL
+    yahoo: AAPL
+    theme: mega-cap US tech
+    news_feeds:
+      - https://news.google.com/rss/search?q=Apple+AAPL&hl=en-US&gl=US&ceid=US:en
+
+  - name: Microsoft
+    ticker: MSFT
+    yahoo: MSFT
+    theme: mega-cap US tech
+    news_feeds:
+      - https://news.google.com/rss/search?q=Microsoft+MSFT&hl=en-US&gl=US&ceid=US:en
+
+  - name: Alphabet
+    ticker: GOOGL
+    yahoo: GOOGL
+    theme: mega-cap US tech
+    news_feeds:
+      - https://news.google.com/rss/search?q=Alphabet+GOOGL&hl=en-US&gl=US&ceid=US:en

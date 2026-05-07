@@ -1,101 +1,11 @@
-import React, { useState, useEffect, useMemo, useCallback, memo } from "react";
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ScrollView, ListRenderItem } from "react-native";
+import React, { useState, useMemo, useCallback, memo } from "react";
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ScrollView, ListRenderItem, Modal, TextInput } from "react-native";
 import { colors, fonts, spacing, presets } from "../../src/theme";
-import { getServerUrl, getToken, onConnectionChange } from "../../src/connection";
-
-interface TradeAgg {
-  Instrument: string; Exchange: string;
-  Count: number; Volume: number; BuyVolume: number; SellVolume: number;
-  VWAP: number; Open: number; High: number; Low: number; Close: number;
-  Turnover: number; P25: number; P50: number; P75: number;
-}
-
-interface TradeEntry {
-  Price: number; Quantity: number; Side: string; Timestamp: string;
-}
-
-interface TradeSnap {
-  Instrument: string; Exchange: string; Trades: TradeEntry[];
-}
+import { useStore, type TradeEntry } from "../../src/store";
 
 // Cap rendered trade rows so the main thread doesn't stall when the
 // snapshot grows (ANR repro 2026-04-22 at ~104 trades/s).
 const MAX_VISIBLE_TRADES = 30;
-
-function useTradeData() {
-  const [aggs, setAggs] = useState<Record<string, TradeAgg>>({});
-  const [snaps, setSnaps] = useState<Record<string, TradeSnap>>({});
-  const [keys, setKeys] = useState<string[]>([]);
-  const [token, setToken] = useState(getToken());
-
-  useEffect(() => {
-    const unsub = onConnectionChange(() => setToken(getToken()));
-    return unsub;
-  }, []);
-
-  useEffect(() => {
-    if (!token) return;
-    let active = true;
-
-    async function poll() {
-      const url = getServerUrl();
-      while (active) {
-        try {
-          const aggResp = await fetch(
-            `${url}/api/v1/snapshot?topic=trade.agg.*.*&mode=latest&token=${token}`
-          );
-          const aggData = await aggResp.json();
-          if (active && Array.isArray(aggData)) {
-            const newAggs: Record<string, TradeAgg> = {};
-            const newKeys: string[] = [];
-            for (const item of aggData) {
-              if (item.Instrument && item.Exchange) {
-                const key = `${item.Exchange}/${item.Instrument}`;
-                newAggs[key] = item;
-                newKeys.push(key);
-              }
-            }
-            newKeys.sort();
-            setAggs(newAggs);
-            setKeys((prev) => shallowEqualArrays(prev, newKeys) ? prev : newKeys);
-          }
-
-          const snapResp = await fetch(
-            `${url}/api/v1/snapshot?topic=trade.snap.*.*&mode=latest&token=${token}`
-          );
-          const snapData = await snapResp.json();
-          if (active && Array.isArray(snapData)) {
-            const newSnaps: Record<string, TradeSnap> = {};
-            for (const item of snapData) {
-              if (item.Instrument && item.Exchange) {
-                const key = `${item.Exchange}/${item.Instrument}`;
-                // Trim on ingest so downstream renders never see the
-                // unbounded list.
-                const trimmed = Array.isArray(item.Trades) && item.Trades.length > MAX_VISIBLE_TRADES
-                  ? { ...item, Trades: item.Trades.slice(-MAX_VISIBLE_TRADES) }
-                  : item;
-                newSnaps[key] = trimmed;
-              }
-            }
-            setSnaps(newSnaps);
-          }
-        } catch {}
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    }
-
-    poll();
-    return () => { active = false; };
-  }, [token]);
-
-  return { aggs, snaps, keys };
-}
-
-function shallowEqualArrays(a: string[], b: string[]) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
 
 interface TradeRowProps { trade: TradeEntry }
 
@@ -113,8 +23,17 @@ const TradeRow = memo(({ trade }: TradeRowProps) => (
 ));
 
 export default function TradesScreen() {
-  const { aggs, snaps, keys } = useTradeData();
-  const [activeIdx, setActiveIdx] = useState(0);
+  const { tradeAggs: aggs, tradeSnaps: snaps, tradeKeys: keys } = useStore();
+  const [activeKey, setActiveKey] = useState("");
+  const [showPicker, setShowPicker] = useState(false);
+  const [search, setSearch] = useState("");
+
+  // Auto-select the first key once data starts arriving. Keeps the
+  // active selection stable across re-renders (was previously
+  // index-based, which could silently drift when keys re-sort).
+  React.useEffect(() => {
+    if (!activeKey && keys.length > 0) setActiveKey(keys[0]);
+  }, [keys.length, activeKey]);
 
   if (keys.length === 0) {
     return (
@@ -127,9 +46,25 @@ export default function TradesScreen() {
     );
   }
 
-  const activeKey = keys[activeIdx] || keys[0];
-  const agg = aggs[activeKey];
-  const snap = snaps[activeKey];
+  const resolvedKey = activeKey || keys[0];
+  const agg = aggs[resolvedKey];
+  const snap = snaps[resolvedKey];
+
+  // key format: "<exchange>/<instrument>". Surface both halves so
+  // the picker shows ticker AND venue, mirroring the LOB screen.
+  const splitKey = (k: string): { exchange: string; instrument: string } => {
+    const i = k.indexOf("/");
+    if (i < 0) return { exchange: "", instrument: k };
+    return { exchange: k.slice(0, i), instrument: k.slice(i + 1) };
+  };
+  const active = splitKey(resolvedKey);
+
+  const filtered = keys.filter((k) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    const { exchange, instrument } = splitKey(k);
+    return instrument.toLowerCase().includes(q) || exchange.toLowerCase().includes(q) || k.toLowerCase().includes(q);
+  });
 
   // Reverse once per snap change; bounded by MAX_VISIBLE_TRADES from
   // the fetch pipeline, so this stays cheap.
@@ -190,23 +125,53 @@ export default function TradesScreen() {
 
   return (
     <View style={presets.screen}>
-      <Text style={presets.header}>TRADES</Text>
+      <Text style={presets.header}>TRADES — {keys.length} feeds</Text>
 
-      {keys.length > 1 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.selector}>
-          {keys.map((k, i) => (
-            <TouchableOpacity
-              key={k}
-              onPress={() => setActiveIdx(i)}
-              style={[s.selectorBtn, i === activeIdx && s.selectorBtnActive]}
-            >
-              <Text style={[s.selectorText, i === activeIdx && s.selectorTextActive]}>
-                {k.split("/")[1] || k}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      )}
+      {/* Instrument + venue picker — same modal pattern as LOB so a
+          BTCUSDT subscription on three exchanges shows up as three
+          rows, not collapsed onto a single "BTCUSDT" button. */}
+      <TouchableOpacity style={s.selectedRow} onPress={() => setShowPicker(true)}>
+        <Text style={s.selectedInst}>{active.instrument || "—"}</Text>
+        <Text style={s.selectedExch}>{active.exchange || ""}</Text>
+        <Text style={s.arrow}>▼</Text>
+      </TouchableOpacity>
+
+      <Modal visible={showPicker} animationType="slide" transparent>
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>SELECT FEED</Text>
+              <TouchableOpacity onPress={() => { setShowPicker(false); setSearch(""); }}>
+                <Text style={s.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={s.searchInput}
+              placeholder="Search ticker or venue..."
+              placeholderTextColor={colors.muted}
+              value={search}
+              onChangeText={setSearch}
+              autoFocus
+            />
+            <Text style={s.modalCount}>{filtered.length} feeds</Text>
+            <ScrollView style={s.modalList} contentContainerStyle={s.modalListContent}>
+              {filtered.map((k) => {
+                const { exchange, instrument } = splitKey(k);
+                const isActive = k === resolvedKey;
+                return (
+                  <TouchableOpacity
+                    key={k}
+                    style={[s.modalItem, isActive && s.modalItemActive]}
+                    onPress={() => { setActiveKey(k); setShowPicker(false); setSearch(""); }}>
+                    <Text style={[s.modalName, isActive && { color: colors.amber }]}>{instrument}</Text>
+                    <Text style={s.modalExch}>{exchange}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* FlatList virtualizes the rows so even a hot symbol with many
           trades no longer stalls the JS thread. */}
@@ -229,27 +194,25 @@ export default function TradesScreen() {
 const s = StyleSheet.create({
   empty: { padding: spacing.lg },
   emptyText: { fontFamily: fonts.mono, fontSize: 12, color: colors.muted },
-  selector: {
-    flexGrow: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  selectorBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: 4,
-    marginRight: spacing.sm,
-    borderWidth: 1,
-    borderColor: "transparent",
-  },
-  selectorBtnActive: { borderColor: colors.amber, backgroundColor: colors.amberDim },
-  selectorText: {
-    fontFamily: fonts.mono, fontWeight: "700", fontSize: 11,
-    color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5,
-  },
-  selectorTextActive: { color: colors.amber },
+  // Selected feed row — tap to open the modal.
+  selectedRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, marginBottom: spacing.xs },
+  selectedInst: { fontFamily: fonts.mono, fontSize: 16, fontWeight: "900", color: colors.amber },
+  selectedExch: { fontFamily: fonts.mono, fontSize: 11, color: colors.muted, marginLeft: 8 },
+  arrow: { fontFamily: fonts.mono, fontSize: 12, color: colors.muted, marginLeft: "auto" },
+  // Modal picker — mirrors LOB visual language.
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.85)", justifyContent: "center", padding: 20 },
+  modalContent: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border, borderRadius: 8, maxHeight: "70%", minHeight: 300 },
+  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalTitle: { fontFamily: fonts.mono, fontSize: 12, fontWeight: "700", color: colors.amber, letterSpacing: 1 },
+  modalClose: { fontSize: 18, color: colors.muted, padding: 4 },
+  searchInput: { fontFamily: fonts.mono, fontSize: 13, color: colors.text, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalCount: { fontFamily: fonts.mono, fontSize: 10, color: colors.muted, paddingHorizontal: spacing.lg, paddingVertical: 4 },
+  modalList: { flexGrow: 1, flexShrink: 1 },
+  modalListContent: { paddingBottom: 20 },
+  modalItem: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  modalItemActive: { backgroundColor: "#1A1200" },
+  modalName: { fontFamily: fonts.mono, fontSize: 14, fontWeight: "700", color: colors.text },
+  modalExch: { fontFamily: fonts.mono, fontSize: 11, color: colors.muted },
   content: { padding: spacing.md },
   statsBlock: { marginBottom: 12 },
   statRow: { flexDirection: "row", marginBottom: 8 },

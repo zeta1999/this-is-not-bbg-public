@@ -7,26 +7,15 @@ option go_package = "github.com/notbbg/notbbg/server/pkg/protocol";
 import "notbbg/v1/types.proto";
 import "google/protobuf/timestamp.proto";
 
-// Main data service for subscribing to feeds and querying cached data.
-service DataService {
-  // Subscribe to real-time updates matching the given subscriptions.
-  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
-
-  // Query historical data from the cache.
-  rpc Query(QueryRequest) returns (QueryResponse);
-
-  // GetDataRange streams a window of historical data for a topic,
-  // chunked so the client can render progressively and cancel via the
-  // request's correlation_id (or standard gRPC context cancellation).
-  // Cache is checked first, then datalake. See DATA-PLAN.md §3.
-  rpc GetDataRange(GetDataRangeRequest) returns (stream GetDataRangeResponse);
-
-  // Export data in bulk (JSON, JSONL, CSV).
-  rpc ExportData(ExportDataRequest) returns (stream ExportDataResponse);
-
-  // Get current status of all data feeds.
-  rpc GetFeedStatus(GetFeedStatusRequest) returns (GetFeedStatusResponse);
-}
+// gRPC service definition was retired 2026-04-25 (Schema-hardening
+// U7) per the no-gRPC policy in feedback_no_grpc.md. The
+// request / response / status messages below survive as raw-proto
+// payload types — the framed-protobuf-over-stdio/Unix/TLS wire
+// protocol uses them directly without a service shim.
+//
+// The HTTP gateway (server/internal/transport/http.go) and the
+// notbbg-server framed-TCP listener serve the same operations
+// over their own routes today; see DATA-PLAN.md §3.
 
 message SubscribeRequest {
   repeated Subscription subscriptions = 1;

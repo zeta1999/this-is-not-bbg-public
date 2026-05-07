@@ -6,3 +6,12 @@ plugins:
   - remote: buf.build/grpc/go
     out: server/pkg/protocol
     opt: paths=source_relative
+  # U4 (2026-04-25): TypeScript types for desktop + phone via the
+  # bufbuild/es remote plugin so the JS side never drifts from
+  # types.proto. Output is ESM TS — desktop (Vite + React) and
+  # phone (Expo) both consume ESM natively. Replaces hand-written
+  # types in desktop/src/types.ts / phone/app/(tabs)/plugins.tsx
+  # over the next iteration.
+  - remote: buf.build/bufbuild/es
+    out: libs/proto-ts/gen
+    opt: target=ts

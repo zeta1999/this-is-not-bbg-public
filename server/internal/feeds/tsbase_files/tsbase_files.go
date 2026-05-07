@@ -3,9 +3,14 @@
 // local path or an NFS/SSHFS mount.
 //
 // Decoders are pluggable by file extension:
-//   - .csv   : header-driven generic CSV (ts-format macro output)
-//   - .jsonl : one notbbg.v1.Update-shaped JSON object per line
-//   - .parquet / .zst : not yet supported — logged + skipped
+//   - .csv     : header-driven generic CSV (ts-format macro output)
+//   - .jsonl   : one notbbg.v1.Update-shaped JSON object per line
+//   - .parquet : columnar, via parquet-go; generic row iteration
+//                yielding a map[string]any payload keyed by column
+//                path (dotted for nested schemas).
+//   - .zst     : not yet supported — logged + skipped (compressed
+//                wrappers around the above formats need separate
+//                content-sniffing).
 //
 // See DATA-PLAN.md §6.
 package tsbase_files
@@ -25,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	parquet "github.com/parquet-go/parquet-go"
 
 	"github.com/notbbg/notbbg/server/internal/bus"
 )
@@ -115,15 +122,17 @@ func (t *Tailer) consumeFile(path string) error {
 		return t.consumeCSV(path)
 	case ".jsonl":
 		return t.consumeJSONL(path)
-	case ".parquet", ".zst":
+	case ".parquet":
+		return t.consumeParquet(path)
+	case ".zst":
 		t.mu.Lock()
 		already := t.skipped[path]
 		t.skipped[path] = true
 		t.mu.Unlock()
 		if !already {
-			slog.Warn("tsbase_files: parquet not yet supported; skipping",
+			slog.Warn("tsbase_files: raw zstd not yet supported; skipping",
 				"path", path,
-				"hint", "wire in an Arrow/parquet-go reader to consume ts-gateway output")
+				"hint", "zst wrappers need content-sniffing; use .jsonl.zst only once datalake reader path is reused")
 		}
 		return nil
 	default:
@@ -250,6 +259,120 @@ func (t *Tailer) consumeJSONL(path string) error {
 	t.cursors[path] = pos
 	t.rows += rowsHere
 	t.mu.Unlock()
+	return nil
+}
+
+// consumeParquet reads a Parquet file via parquet-go and publishes
+// one bus message per row. Malformed files are skipped (not errored)
+// so a partially-written file in the watch directory doesn't kill
+// the scan; parquet-go's NewReader panics on bad input, which we
+// catch and log once. The payload is a flat
+// `map[string]any` keyed by the dotted column path (e.g.
+// "trades.price"). Leaf Parquet types are mapped to Go natives:
+// BOOLEAN→bool, INT32/INT64→int64, FLOAT/DOUBLE→float64, BYTE_ARRAY/
+// FIXED_LEN_BYTE_ARRAY→string (UTF-8 best-effort).
+//
+// Append-only tailing isn't supported on Parquet today — the format
+// is page-oriented so cheap offset tracking isn't meaningful.
+// Cursor stays at file-size-at-last-read to avoid re-publishing on
+// re-open; truncation / rewrite resets to 0.
+func (t *Tailer) consumeParquet(path string) error {
+	t.mu.Lock()
+	cursor := t.cursors[path]
+	alreadyBad := t.skipped[path]
+	t.mu.Unlock()
+
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if stat.Size() == cursor {
+		return nil // unchanged since last scan
+	}
+	// Truncation needs no branch: we always re-read the whole parquet.
+
+	// Validate the file header up-front — parquet-go's NewReader
+	// panics on bad input, so surface the failure as a once-per-file
+	// warning and move on instead of taking down the tailer.
+	if _, err := parquet.OpenFile(f, stat.Size()); err != nil {
+		if !alreadyBad {
+			slog.Warn("tsbase_files: parquet file looks malformed; skipping",
+				"path", path, "error", err)
+			t.mu.Lock()
+			t.skipped[path] = true
+			t.mu.Unlock()
+		}
+		return nil
+	}
+
+	reader := parquet.NewReader(f)
+	defer reader.Close()
+
+	cols := reader.Schema().Columns()
+	colPaths := make([]string, len(cols))
+	for i, p := range cols {
+		colPaths[i] = strings.Join(p, ".")
+	}
+
+	topic := t.cfg.TopicPrefix + "tsbase." + strings.TrimSuffix(filepath.Base(path), ".parquet")
+	rows := make([]parquet.Row, 64)
+	rowsHere := int64(0)
+	for {
+		n, rerr := reader.ReadRows(rows)
+		for i := 0; i < n; i++ {
+			payload := make(map[string]any, len(colPaths))
+			for j, v := range rows[i] {
+				if j >= len(colPaths) {
+					break
+				}
+				payload[colPaths[j]] = parquetValueToAny(v)
+			}
+			t.b.Publish(bus.Message{Topic: topic, Payload: payload})
+			rowsHere++
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			slog.Debug("parquet read error (stopping)", "path", path, "error", rerr)
+			break
+		}
+	}
+
+	t.mu.Lock()
+	t.cursors[path] = stat.Size()
+	t.rows += rowsHere
+	t.mu.Unlock()
+	return nil
+}
+
+// parquetValueToAny maps a parquet.Value to a JSON-friendly Go type.
+// Null → nil. Unknown kinds → nil (renderers treat missing vs nil
+// uniformly).
+func parquetValueToAny(v parquet.Value) any {
+	if v.IsNull() {
+		return nil
+	}
+	switch v.Kind() {
+	case parquet.Boolean:
+		return v.Boolean()
+	case parquet.Int32:
+		return int64(v.Int32())
+	case parquet.Int64:
+		return v.Int64()
+	case parquet.Float:
+		return float64(v.Float())
+	case parquet.Double:
+		return v.Double()
+	case parquet.ByteArray, parquet.FixedLenByteArray:
+		return string(v.ByteArray())
+	}
 	return nil
 }
 

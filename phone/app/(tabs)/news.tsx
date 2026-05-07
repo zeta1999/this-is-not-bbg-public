@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, Linking, Modal, ScrollView } from "react-native";
 import { colors, fonts, spacing, presets } from "../../src/theme";
-import { getServerUrl, getToken, onConnectionChange } from "../../src/connection";
+import { getServerUrl, getToken } from "../../src/connection";
+import { useStore } from "../../src/store";
 
 interface NewsItem {
   id: string;
@@ -13,70 +14,9 @@ interface NewsItem {
   published: string;
 }
 
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-function useNews() {
-  const [items, setItems] = useState<NewsItem[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [token, setToken] = useState(getToken());
-
-  useEffect(() => {
-    const unsub = onConnectionChange(() => setToken(getToken()));
-    return unsub;
-  }, []);
-
-  useEffect(() => {
-    if (!token) { setConnected(false); return; }
-    let active = true;
-
-    async function poll() {
-      while (active) {
-        try {
-          const url = getServerUrl();
-          const resp = await fetch(`${url}/api/v1/snapshot?topic=news&limit=200&token=${encodeURIComponent(token)}`);
-          if (!resp.ok) { setConnected(false); await sleep(10000); continue; }
-          const data = await resp.json();
-          if (!Array.isArray(data)) { await sleep(10000); continue; }
-
-          setConnected(true);
-          const parsed: NewsItem[] = data.map((d: any) => ({
-            id: d.ID || d.id || "",
-            title: d.Title || d.title || "",
-            body: d.Body || d.body || d.Description || d.description || "",
-            source: d.Source || d.source || "",
-            tickers: d.Tickers || d.tickers || [],
-            url: d.URL || d.Url || d.url || "",
-            published: d.Published || d.published || d.Timestamp || "",
-          })).filter((n: NewsItem) => n.title);
-
-          // Dedup by id or title, sort newest first.
-          const seen = new Set<string>();
-          const deduped: NewsItem[] = [];
-          for (const n of parsed) {
-            const key = n.id || n.title;
-            if (!seen.has(key)) { seen.add(key); deduped.push(n); }
-          }
-          deduped.sort((a, b) => (b.published || "").localeCompare(a.published || ""));
-          setItems(deduped);
-        } catch {
-          setConnected(false);
-        }
-        await sleep(15000);
-      }
-    }
-
-    poll();
-    return () => { active = false; };
-  }, [token]);
-
-  return { items, connected };
-}
-
-function timeAgo(published: string): string {
-  if (!published) return "";
-  const ts = new Date(published).getTime();
-  if (isNaN(ts)) return "";
-  const ago = Math.floor((Date.now() - ts) / 60000);
+function timeAgo(tsSec: number): string {
+  if (!tsSec) return "";
+  const ago = Math.floor((Date.now() / 1000 - tsSec) / 60);
   if (ago < 1) return "now";
   if (ago < 60) return `${ago}m`;
   if (ago < 1440) return `${Math.floor(ago / 60)}h`;
@@ -84,7 +24,16 @@ function timeAgo(published: string): string {
 }
 
 export default function NewsScreen() {
-  const { items, connected } = useNews();
+  // SSE-driven items live in the shared store (topic = "news").
+  // Local view layer just maps + offers a search overlay that
+  // hits /api/v1/news/search on demand for BM25 results not yet
+  // in the live stream.
+  const { newsItems: liveItems, connected } = useStore();
+  const items: NewsItem[] = liveItems.map((n) => ({
+    id: n.title, title: n.title, body: n.body,
+    source: n.source, tickers: n.tickers, url: n.url,
+    published: new Date(n.timestamp * 1000).toISOString(),
+  }));
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<NewsItem[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -154,7 +103,7 @@ export default function NewsScreen() {
             <ScrollView style={s.modalScroll}>
               <View style={s.modalMeta}>
                 <Text style={s.modalSource}>{selected?.source || ""}</Text>
-                <Text style={s.modalTime}>{selected ? timeAgo(selected.published) : ""}</Text>
+                <Text style={s.modalTime}>{selected ? timeAgo(new Date(selected.published).getTime() / 1000) : ""}</Text>
               </View>
               <Text style={s.modalTitle}>{selected?.title || ""}</Text>
               {(selected?.tickers?.length ?? 0) > 0 && (
@@ -188,9 +137,16 @@ export default function NewsScreen() {
 
       <FlatList
         data={displayed}
+        // flex: 1 + contentContainerStyle padding so the list
+        // claims the remaining vertical space and actually
+        // scrolls — without this the list extended off-screen
+        // and the user couldn't reach items past the visible
+        // window (2026-04-28 ski.txt feedback).
+        style={s.list}
+        contentContainerStyle={s.listContent}
         keyExtractor={(item, i) => item.id || `${item.title}-${i}`}
         renderItem={({ item }) => {
-          const ago = timeAgo(item.published);
+          const ago = timeAgo(new Date(item.published).getTime() / 1000);
           return (
             <TouchableOpacity style={s.row} onPress={() => setSelected(item)}>
               <View style={s.meta}>
@@ -217,6 +173,8 @@ export default function NewsScreen() {
 }
 
 const s = StyleSheet.create({
+  list: { flex: 1 },
+  listContent: { paddingBottom: spacing.lg },
   row: { paddingVertical: spacing.sm, paddingHorizontal: spacing.lg },
   meta: { flexDirection: "row", gap: 8, marginBottom: 4 },
   source: { fontFamily: fonts.mono, fontSize: 10, fontWeight: "700", color: colors.blue },

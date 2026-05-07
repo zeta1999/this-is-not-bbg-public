@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/exchange-config",
+  "$ref": "#/$defs/ExchangeConfig",
+  "$defs": {
+    "ExchangeConfig": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "feed_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rate_limit": {
+          "type": "integer"
+        },
+        "ws_endpoint": {
+          "type": "string"
+        },
+        "rest_base": {
+          "type": "string"
+        },
+        "backfill_days": {
+          "type": "integer"
+        },
+        "timeframes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "enabled",
+        "symbols",
+        "feed_types",
+        "rate_limit",
+        "ws_endpoint",
+        "rest_base",
+        "backfill_days",
+        "timeframes"
+      ]
+    }
+  }
+}

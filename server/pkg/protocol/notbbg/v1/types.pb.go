@@ -9,6 +9,7 @@ package protocol
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -237,6 +238,13 @@ func (FeedState) EnumDescriptor() ([]byte, []int) {
 }
 
 // Canonical OHLC candlestick data.
+//
+// double fields keep the fast-math path (charts, indicators).
+// _decimal counterparts carry the exchange-committed string —
+// REQUIRED for crypto where adapter rounding can drift cents
+// (decision 2026-04-24, captured in feedback_decimal_required.md).
+// Adapters populate decimals from the raw json.Number; consumers
+// needing exact fidelity (backtester, audit, OMS) prefer them.
 type OHLC struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Instrument    string                 `protobuf:"bytes,1,opt,name=instrument,proto3" json:"instrument,omitempty"` // e.g. "BTCUSD"
@@ -248,6 +256,11 @@ type OHLC struct {
 	Low           float64                `protobuf:"fixed64,7,opt,name=low,proto3" json:"low,omitempty"`
 	Close         float64                `protobuf:"fixed64,8,opt,name=close,proto3" json:"close,omitempty"`
 	Volume        float64                `protobuf:"fixed64,9,opt,name=volume,proto3" json:"volume,omitempty"`
+	OpenDecimal   string                 `protobuf:"bytes,10,opt,name=open_decimal,json=openDecimal,proto3" json:"open_decimal,omitempty"`
+	HighDecimal   string                 `protobuf:"bytes,11,opt,name=high_decimal,json=highDecimal,proto3" json:"high_decimal,omitempty"`
+	LowDecimal    string                 `protobuf:"bytes,12,opt,name=low_decimal,json=lowDecimal,proto3" json:"low_decimal,omitempty"`
+	CloseDecimal  string                 `protobuf:"bytes,13,opt,name=close_decimal,json=closeDecimal,proto3" json:"close_decimal,omitempty"`
+	VolumeDecimal string                 `protobuf:"bytes,14,opt,name=volume_decimal,json=volumeDecimal,proto3" json:"volume_decimal,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -345,13 +358,51 @@ func (x *OHLC) GetVolume() float64 {
 	return 0
 }
 
+func (x *OHLC) GetOpenDecimal() string {
+	if x != nil {
+		return x.OpenDecimal
+	}
+	return ""
+}
+
+func (x *OHLC) GetHighDecimal() string {
+	if x != nil {
+		return x.HighDecimal
+	}
+	return ""
+}
+
+func (x *OHLC) GetLowDecimal() string {
+	if x != nil {
+		return x.LowDecimal
+	}
+	return ""
+}
+
+func (x *OHLC) GetCloseDecimal() string {
+	if x != nil {
+		return x.CloseDecimal
+	}
+	return ""
+}
+
+func (x *OHLC) GetVolumeDecimal() string {
+	if x != nil {
+		return x.VolumeDecimal
+	}
+	return ""
+}
+
 // Single price level in an order book.
 type PriceLevel struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Price         float64                `protobuf:"fixed64,1,opt,name=price,proto3" json:"price,omitempty"`
-	Quantity      float64                `protobuf:"fixed64,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Price           float64                `protobuf:"fixed64,1,opt,name=price,proto3" json:"price,omitempty"`
+	Quantity        float64                `protobuf:"fixed64,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	OrderCount      uint32                 `protobuf:"varint,3,opt,name=order_count,json=orderCount,proto3" json:"order_count,omitempty"`      // populated where venue exposes (e.g. Bybit); zero otherwise
+	PriceDecimal    string                 `protobuf:"bytes,4,opt,name=price_decimal,json=priceDecimal,proto3" json:"price_decimal,omitempty"` // exchange-committed string (see OHLC above)
+	QuantityDecimal string                 `protobuf:"bytes,5,opt,name=quantity_decimal,json=quantityDecimal,proto3" json:"quantity_decimal,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PriceLevel) Reset() {
@@ -396,6 +447,27 @@ func (x *PriceLevel) GetQuantity() float64 {
 		return x.Quantity
 	}
 	return 0
+}
+
+func (x *PriceLevel) GetOrderCount() uint32 {
+	if x != nil {
+		return x.OrderCount
+	}
+	return 0
+}
+
+func (x *PriceLevel) GetPriceDecimal() string {
+	if x != nil {
+		return x.PriceDecimal
+	}
+	return ""
+}
+
+func (x *PriceLevel) GetQuantityDecimal() string {
+	if x != nil {
+		return x.QuantityDecimal
+	}
+	return ""
 }
 
 // Snapshot of a limit order book.
@@ -485,16 +557,18 @@ func (x *LOBSnapshot) GetAsks() []*PriceLevel {
 
 // A single executed trade.
 type Trade struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instrument    string                 `protobuf:"bytes,1,opt,name=instrument,proto3" json:"instrument,omitempty"`
-	Exchange      string                 `protobuf:"bytes,2,opt,name=exchange,proto3" json:"exchange,omitempty"`
-	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Price         float64                `protobuf:"fixed64,4,opt,name=price,proto3" json:"price,omitempty"`
-	Quantity      float64                `protobuf:"fixed64,5,opt,name=quantity,proto3" json:"quantity,omitempty"`
-	Side          Side                   `protobuf:"varint,6,opt,name=side,proto3,enum=notbbg.v1.Side" json:"side,omitempty"`
-	TradeId       string                 `protobuf:"bytes,7,opt,name=trade_id,json=tradeId,proto3" json:"trade_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Instrument      string                 `protobuf:"bytes,1,opt,name=instrument,proto3" json:"instrument,omitempty"`
+	Exchange        string                 `protobuf:"bytes,2,opt,name=exchange,proto3" json:"exchange,omitempty"`
+	Timestamp       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Price           float64                `protobuf:"fixed64,4,opt,name=price,proto3" json:"price,omitempty"`
+	Quantity        float64                `protobuf:"fixed64,5,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	Side            Side                   `protobuf:"varint,6,opt,name=side,proto3,enum=notbbg.v1.Side" json:"side,omitempty"`
+	TradeId         string                 `protobuf:"bytes,7,opt,name=trade_id,json=tradeId,proto3" json:"trade_id,omitempty"`
+	PriceDecimal    string                 `protobuf:"bytes,8,opt,name=price_decimal,json=priceDecimal,proto3" json:"price_decimal,omitempty"` // exchange-committed string (see OHLC above)
+	QuantityDecimal string                 `protobuf:"bytes,9,opt,name=quantity_decimal,json=quantityDecimal,proto3" json:"quantity_decimal,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Trade) Reset() {
@@ -572,6 +646,20 @@ func (x *Trade) GetSide() Side {
 func (x *Trade) GetTradeId() string {
 	if x != nil {
 		return x.TradeId
+	}
+	return ""
+}
+
+func (x *Trade) GetPriceDecimal() string {
+	if x != nil {
+		return x.PriceDecimal
+	}
+	return ""
+}
+
+func (x *Trade) GetQuantityDecimal() string {
+	if x != nil {
+		return x.QuantityDecimal
 	}
 	return ""
 }
@@ -1301,11 +1389,504 @@ func (*Update_Alert) isUpdate_Payload() {}
 
 func (*Update_FeedStatus) isUpdate_Payload() {}
 
+// Aggregated trade activity over a window. Replaces the ad-hoc
+// map[string]any payload TUI/desktop saw on `trade.agg.<exchange>.<symbol>`.
+type TradeAgg struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Instrument  string                 `protobuf:"bytes,1,opt,name=instrument,proto3" json:"instrument,omitempty"`
+	Exchange    string                 `protobuf:"bytes,2,opt,name=exchange,proto3" json:"exchange,omitempty"`
+	WindowStart *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=window_start,json=windowStart,proto3" json:"window_start,omitempty"`
+	WindowEnd   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=window_end,json=windowEnd,proto3" json:"window_end,omitempty"`
+	Count       uint64                 `protobuf:"varint,5,opt,name=count,proto3" json:"count,omitempty"`        // number of trades in the window
+	Volume      float64                `protobuf:"fixed64,6,opt,name=volume,proto3" json:"volume,omitempty"`     // sum of quantities
+	Notional    float64                `protobuf:"fixed64,7,opt,name=notional,proto3" json:"notional,omitempty"` // sum of (price * quantity)
+	Vwap        float64                `protobuf:"fixed64,8,opt,name=vwap,proto3" json:"vwap,omitempty"`         // notional / volume (when volume > 0)
+	BuyCount    uint64                 `protobuf:"varint,9,opt,name=buy_count,json=buyCount,proto3" json:"buy_count,omitempty"`
+	SellCount   uint64                 `protobuf:"varint,10,opt,name=sell_count,json=sellCount,proto3" json:"sell_count,omitempty"`
+	// Side bias in [-1, 1]; positive = more buy-side notional.
+	SideBias      float64 `protobuf:"fixed64,11,opt,name=side_bias,json=sideBias,proto3" json:"side_bias,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TradeAgg) Reset() {
+	*x = TradeAgg{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TradeAgg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TradeAgg) ProtoMessage() {}
+
+func (x *TradeAgg) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TradeAgg.ProtoReflect.Descriptor instead.
+func (*TradeAgg) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TradeAgg) GetInstrument() string {
+	if x != nil {
+		return x.Instrument
+	}
+	return ""
+}
+
+func (x *TradeAgg) GetExchange() string {
+	if x != nil {
+		return x.Exchange
+	}
+	return ""
+}
+
+func (x *TradeAgg) GetWindowStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.WindowStart
+	}
+	return nil
+}
+
+func (x *TradeAgg) GetWindowEnd() *timestamppb.Timestamp {
+	if x != nil {
+		return x.WindowEnd
+	}
+	return nil
+}
+
+func (x *TradeAgg) GetCount() uint64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *TradeAgg) GetVolume() float64 {
+	if x != nil {
+		return x.Volume
+	}
+	return 0
+}
+
+func (x *TradeAgg) GetNotional() float64 {
+	if x != nil {
+		return x.Notional
+	}
+	return 0
+}
+
+func (x *TradeAgg) GetVwap() float64 {
+	if x != nil {
+		return x.Vwap
+	}
+	return 0
+}
+
+func (x *TradeAgg) GetBuyCount() uint64 {
+	if x != nil {
+		return x.BuyCount
+	}
+	return 0
+}
+
+func (x *TradeAgg) GetSellCount() uint64 {
+	if x != nil {
+		return x.SellCount
+	}
+	return 0
+}
+
+func (x *TradeAgg) GetSideBias() float64 {
+	if x != nil {
+		return x.SideBias
+	}
+	return 0
+}
+
+// One-shot snapshot of the most recent trades for a topic; used for
+// late-joining-client warmup so the trades panel isn't empty until
+// the next live trade arrives.
+type TradeSnap struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Instrument    string                 `protobuf:"bytes,1,opt,name=instrument,proto3" json:"instrument,omitempty"`
+	Exchange      string                 `protobuf:"bytes,2,opt,name=exchange,proto3" json:"exchange,omitempty"`
+	GeneratedAt   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"`
+	Trades        []*Trade               `protobuf:"bytes,4,rep,name=trades,proto3" json:"trades,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TradeSnap) Reset() {
+	*x = TradeSnap{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TradeSnap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TradeSnap) ProtoMessage() {}
+
+func (x *TradeSnap) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TradeSnap.ProtoReflect.Descriptor instead.
+func (*TradeSnap) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *TradeSnap) GetInstrument() string {
+	if x != nil {
+		return x.Instrument
+	}
+	return ""
+}
+
+func (x *TradeSnap) GetExchange() string {
+	if x != nil {
+		return x.Exchange
+	}
+	return ""
+}
+
+func (x *TradeSnap) GetGeneratedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.GeneratedAt
+	}
+	return nil
+}
+
+func (x *TradeSnap) GetTrades() []*Trade {
+	if x != nil {
+		return x.Trades
+	}
+	return nil
+}
+
+// Single row of the cross-venue price-sanity matrix. Replaces the
+// per-row map[string]any the SANITY tab consumes.
+type SanityRow struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Pair        string                 `protobuf:"bytes,1,opt,name=pair,proto3" json:"pair,omitempty"` // e.g. "BTCUSDT"
+	MedianPrice float64                `protobuf:"fixed64,2,opt,name=median_price,json=medianPrice,proto3" json:"median_price,omitempty"`
+	MaxDevBp    float64                `protobuf:"fixed64,3,opt,name=max_dev_bp,json=maxDevBp,proto3" json:"max_dev_bp,omitempty"` // max venue deviation in basis points
+	UpdatedAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// Per-venue breakdown: { exchange -> price }.
+	Prices        map[string]float64 `protobuf:"bytes,5,rep,name=prices,proto3" json:"prices,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SanityRow) Reset() {
+	*x = SanityRow{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SanityRow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SanityRow) ProtoMessage() {}
+
+func (x *SanityRow) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SanityRow.ProtoReflect.Descriptor instead.
+func (*SanityRow) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SanityRow) GetPair() string {
+	if x != nil {
+		return x.Pair
+	}
+	return ""
+}
+
+func (x *SanityRow) GetMedianPrice() float64 {
+	if x != nil {
+		return x.MedianPrice
+	}
+	return 0
+}
+
+func (x *SanityRow) GetMaxDevBp() float64 {
+	if x != nil {
+		return x.MaxDevBp
+	}
+	return 0
+}
+
+func (x *SanityRow) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+func (x *SanityRow) GetPrices() map[string]float64 {
+	if x != nil {
+		return x.Prices
+	}
+	return nil
+}
+
+// Snapshot of the entire sanity matrix; published on `sanity.prices`
+// at a slow cadence (so the SANITY tab can re-render in one frame).
+type SanitySnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GeneratedAt   *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"`
+	Rows          []*SanityRow           `protobuf:"bytes,2,rep,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SanitySnapshot) Reset() {
+	*x = SanitySnapshot{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SanitySnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SanitySnapshot) ProtoMessage() {}
+
+func (x *SanitySnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SanitySnapshot.ProtoReflect.Descriptor instead.
+func (*SanitySnapshot) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SanitySnapshot) GetGeneratedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.GeneratedAt
+	}
+	return nil
+}
+
+func (x *SanitySnapshot) GetRows() []*SanityRow {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
+// Plugin liveness status. Published on `plugin.status` every ~10 s.
+// The Go plugins.computePluginState function emits this shape.
+type PluginStatus struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	State         string                 `protobuf:"bytes,2,opt,name=state,proto3" json:"state,omitempty"` // "connected" | "stale" | "error" | "stopped"
+	LastActivity  *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_activity,json=lastActivity,proto3" json:"last_activity,omitempty"`
+	Pid           int32                  `protobuf:"varint,4,opt,name=pid,proto3" json:"pid,omitempty"`
+	ErrorCount    uint64                 `protobuf:"varint,5,opt,name=error_count,json=errorCount,proto3" json:"error_count,omitempty"`
+	Running       bool                   `protobuf:"varint,6,opt,name=running,proto3" json:"running,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PluginStatus) Reset() {
+	*x = PluginStatus{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PluginStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PluginStatus) ProtoMessage() {}
+
+func (x *PluginStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PluginStatus.ProtoReflect.Descriptor instead.
+func (*PluginStatus) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PluginStatus) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *PluginStatus) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *PluginStatus) GetLastActivity() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastActivity
+	}
+	return nil
+}
+
+func (x *PluginStatus) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *PluginStatus) GetErrorCount() uint64 {
+	if x != nil {
+		return x.ErrorCount
+	}
+	return 0
+}
+
+func (x *PluginStatus) GetRunning() bool {
+	if x != nil {
+		return x.Running
+	}
+	return false
+}
+
+// GenericRow carries free-form rows from sources whose schema isn't
+// stable enough to bind to a strongly-typed proto today (Sibelius
+// tsbase_files, Ravel adapter, ad-hoc CSV ingest). The `payload`
+// field uses google.protobuf.Struct so existing JSON-blob-style
+// publishers don't have to upgrade in lockstep with the U1 work.
+//
+// New publishers SHOULD prefer a proper proto. GenericRow is the
+// escape hatch, not the recommendation.
+type GenericRow struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"` // e.g. "sibelius", "ravel", "tsbase_files"
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`     // source-defined row kind, e.g. "voltools.snap"
+	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	Payload       *structpb.Struct       `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GenericRow) Reset() {
+	*x = GenericRow{}
+	mi := &file_notbbg_v1_types_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenericRow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenericRow) ProtoMessage() {}
+
+func (x *GenericRow) ProtoReflect() protoreflect.Message {
+	mi := &file_notbbg_v1_types_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenericRow.ProtoReflect.Descriptor instead.
+func (*GenericRow) Descriptor() ([]byte, []int) {
+	return file_notbbg_v1_types_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GenericRow) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *GenericRow) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *GenericRow) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
+func (x *GenericRow) GetPayload() *structpb.Struct {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
 var File_notbbg_v1_types_proto protoreflect.FileDescriptor
 
 const file_notbbg_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x15notbbg/v1/types.proto\x12\tnotbbg.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x82\x02\n" +
+	"\x15notbbg/v1/types.proto\x12\tnotbbg.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xb5\x03\n" +
 	"\x04OHLC\x12\x1e\n" +
 	"\n" +
 	"instrument\x18\x01 \x01(\tR\n" +
@@ -1317,11 +1898,22 @@ const file_notbbg_v1_types_proto_rawDesc = "" +
 	"\x04high\x18\x06 \x01(\x01R\x04high\x12\x10\n" +
 	"\x03low\x18\a \x01(\x01R\x03low\x12\x14\n" +
 	"\x05close\x18\b \x01(\x01R\x05close\x12\x16\n" +
-	"\x06volume\x18\t \x01(\x01R\x06volume\">\n" +
+	"\x06volume\x18\t \x01(\x01R\x06volume\x12!\n" +
+	"\fopen_decimal\x18\n" +
+	" \x01(\tR\vopenDecimal\x12!\n" +
+	"\fhigh_decimal\x18\v \x01(\tR\vhighDecimal\x12\x1f\n" +
+	"\vlow_decimal\x18\f \x01(\tR\n" +
+	"lowDecimal\x12#\n" +
+	"\rclose_decimal\x18\r \x01(\tR\fcloseDecimal\x12%\n" +
+	"\x0evolume_decimal\x18\x0e \x01(\tR\rvolumeDecimal\"\xaf\x01\n" +
 	"\n" +
 	"PriceLevel\x12\x14\n" +
 	"\x05price\x18\x01 \x01(\x01R\x05price\x12\x1a\n" +
-	"\bquantity\x18\x02 \x01(\x01R\bquantity\"\x82\x02\n" +
+	"\bquantity\x18\x02 \x01(\x01R\bquantity\x12\x1f\n" +
+	"\vorder_count\x18\x03 \x01(\rR\n" +
+	"orderCount\x12#\n" +
+	"\rprice_decimal\x18\x04 \x01(\tR\fpriceDecimal\x12)\n" +
+	"\x10quantity_decimal\x18\x05 \x01(\tR\x0fquantityDecimal\"\x82\x02\n" +
 	"\vLOBSnapshot\x12\x1e\n" +
 	"\n" +
 	"instrument\x18\x01 \x01(\tR\n" +
@@ -1330,7 +1922,7 @@ const file_notbbg_v1_types_proto_rawDesc = "" +
 	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12'\n" +
 	"\x0fsequence_number\x18\x04 \x01(\x04R\x0esequenceNumber\x12)\n" +
 	"\x04bids\x18\x05 \x03(\v2\x15.notbbg.v1.PriceLevelR\x04bids\x12)\n" +
-	"\x04asks\x18\x06 \x03(\v2\x15.notbbg.v1.PriceLevelR\x04asks\"\xef\x01\n" +
+	"\x04asks\x18\x06 \x03(\v2\x15.notbbg.v1.PriceLevelR\x04asks\"\xbf\x02\n" +
 	"\x05Trade\x12\x1e\n" +
 	"\n" +
 	"instrument\x18\x01 \x01(\tR\n" +
@@ -1340,7 +1932,9 @@ const file_notbbg_v1_types_proto_rawDesc = "" +
 	"\x05price\x18\x04 \x01(\x01R\x05price\x12\x1a\n" +
 	"\bquantity\x18\x05 \x01(\x01R\bquantity\x12#\n" +
 	"\x04side\x18\x06 \x01(\x0e2\x0f.notbbg.v1.SideR\x04side\x12\x19\n" +
-	"\btrade_id\x18\a \x01(\tR\atradeId\"\xe3\x01\n" +
+	"\btrade_id\x18\a \x01(\tR\atradeId\x12#\n" +
+	"\rprice_decimal\x18\b \x01(\tR\fpriceDecimal\x12)\n" +
+	"\x10quantity_decimal\x18\t \x01(\tR\x0fquantityDecimal\"\xe3\x01\n" +
 	"\bNewsItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x12\n" +
@@ -1408,7 +2002,60 @@ const file_notbbg_v1_types_proto_rawDesc = "" +
 	"\x05alert\x18\x0e \x01(\v2\x10.notbbg.v1.AlertH\x00R\x05alert\x128\n" +
 	"\vfeed_status\x18\x0f \x01(\v2\x15.notbbg.v1.FeedStatusH\x00R\n" +
 	"feedStatusB\t\n" +
-	"\apayload*9\n" +
+	"\apayload\"\xf7\x02\n" +
+	"\bTradeAgg\x12\x1e\n" +
+	"\n" +
+	"instrument\x18\x01 \x01(\tR\n" +
+	"instrument\x12\x1a\n" +
+	"\bexchange\x18\x02 \x01(\tR\bexchange\x12=\n" +
+	"\fwindow_start\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vwindowStart\x129\n" +
+	"\n" +
+	"window_end\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\twindowEnd\x12\x14\n" +
+	"\x05count\x18\x05 \x01(\x04R\x05count\x12\x16\n" +
+	"\x06volume\x18\x06 \x01(\x01R\x06volume\x12\x1a\n" +
+	"\bnotional\x18\a \x01(\x01R\bnotional\x12\x12\n" +
+	"\x04vwap\x18\b \x01(\x01R\x04vwap\x12\x1b\n" +
+	"\tbuy_count\x18\t \x01(\x04R\bbuyCount\x12\x1d\n" +
+	"\n" +
+	"sell_count\x18\n" +
+	" \x01(\x04R\tsellCount\x12\x1b\n" +
+	"\tside_bias\x18\v \x01(\x01R\bsideBias\"\xb0\x01\n" +
+	"\tTradeSnap\x12\x1e\n" +
+	"\n" +
+	"instrument\x18\x01 \x01(\tR\n" +
+	"instrument\x12\x1a\n" +
+	"\bexchange\x18\x02 \x01(\tR\bexchange\x12=\n" +
+	"\fgenerated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vgeneratedAt\x12(\n" +
+	"\x06trades\x18\x04 \x03(\v2\x10.notbbg.v1.TradeR\x06trades\"\x90\x02\n" +
+	"\tSanityRow\x12\x12\n" +
+	"\x04pair\x18\x01 \x01(\tR\x04pair\x12!\n" +
+	"\fmedian_price\x18\x02 \x01(\x01R\vmedianPrice\x12\x1c\n" +
+	"\n" +
+	"max_dev_bp\x18\x03 \x01(\x01R\bmaxDevBp\x129\n" +
+	"\n" +
+	"updated_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x128\n" +
+	"\x06prices\x18\x05 \x03(\v2 .notbbg.v1.SanityRow.PricesEntryR\x06prices\x1a9\n" +
+	"\vPricesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"y\n" +
+	"\x0eSanitySnapshot\x12=\n" +
+	"\fgenerated_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\vgeneratedAt\x12(\n" +
+	"\x04rows\x18\x02 \x03(\v2\x14.notbbg.v1.SanityRowR\x04rows\"\xc6\x01\n" +
+	"\fPluginStatus\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05state\x18\x02 \x01(\tR\x05state\x12?\n" +
+	"\rlast_activity\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\flastActivity\x12\x10\n" +
+	"\x03pid\x18\x04 \x01(\x05R\x03pid\x12\x1f\n" +
+	"\verror_count\x18\x05 \x01(\x04R\n" +
+	"errorCount\x12\x18\n" +
+	"\arunning\x18\x06 \x01(\bR\arunning\"\xa8\x01\n" +
+	"\n" +
+	"GenericRow\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12;\n" +
+	"\vobserved_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\x121\n" +
+	"\apayload\x18\x04 \x01(\v2\x17.google.protobuf.StructR\apayload*9\n" +
 	"\x04Side\x12\x14\n" +
 	"\x10SIDE_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bSIDE_BUY\x10\x01\x12\r\n" +
@@ -1445,7 +2092,7 @@ func file_notbbg_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_notbbg_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_notbbg_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_notbbg_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_notbbg_v1_types_proto_goTypes = []any{
 	(Side)(0),                     // 0: notbbg.v1.Side
 	(AlertType)(0),                // 1: notbbg.v1.AlertType
@@ -1462,43 +2109,62 @@ var file_notbbg_v1_types_proto_goTypes = []any{
 	(*SeriesKey)(nil),             // 12: notbbg.v1.SeriesKey
 	(*SeriesPoint)(nil),           // 13: notbbg.v1.SeriesPoint
 	(*Update)(nil),                // 14: notbbg.v1.Update
-	nil,                           // 15: notbbg.v1.Subscription.FiltersEntry
-	nil,                           // 16: notbbg.v1.SeriesKey.DimsEntry
-	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
+	(*TradeAgg)(nil),              // 15: notbbg.v1.TradeAgg
+	(*TradeSnap)(nil),             // 16: notbbg.v1.TradeSnap
+	(*SanityRow)(nil),             // 17: notbbg.v1.SanityRow
+	(*SanitySnapshot)(nil),        // 18: notbbg.v1.SanitySnapshot
+	(*PluginStatus)(nil),          // 19: notbbg.v1.PluginStatus
+	(*GenericRow)(nil),            // 20: notbbg.v1.GenericRow
+	nil,                           // 21: notbbg.v1.Subscription.FiltersEntry
+	nil,                           // 22: notbbg.v1.SeriesKey.DimsEntry
+	nil,                           // 23: notbbg.v1.SanityRow.PricesEntry
+	(*timestamppb.Timestamp)(nil), // 24: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 25: google.protobuf.Struct
 }
 var file_notbbg_v1_types_proto_depIdxs = []int32{
-	17, // 0: notbbg.v1.OHLC.timestamp:type_name -> google.protobuf.Timestamp
-	17, // 1: notbbg.v1.LOBSnapshot.timestamp:type_name -> google.protobuf.Timestamp
+	24, // 0: notbbg.v1.OHLC.timestamp:type_name -> google.protobuf.Timestamp
+	24, // 1: notbbg.v1.LOBSnapshot.timestamp:type_name -> google.protobuf.Timestamp
 	5,  // 2: notbbg.v1.LOBSnapshot.bids:type_name -> notbbg.v1.PriceLevel
 	5,  // 3: notbbg.v1.LOBSnapshot.asks:type_name -> notbbg.v1.PriceLevel
-	17, // 4: notbbg.v1.Trade.timestamp:type_name -> google.protobuf.Timestamp
+	24, // 4: notbbg.v1.Trade.timestamp:type_name -> google.protobuf.Timestamp
 	0,  // 5: notbbg.v1.Trade.side:type_name -> notbbg.v1.Side
-	17, // 6: notbbg.v1.NewsItem.published_at:type_name -> google.protobuf.Timestamp
+	24, // 6: notbbg.v1.NewsItem.published_at:type_name -> google.protobuf.Timestamp
 	1,  // 7: notbbg.v1.Alert.type:type_name -> notbbg.v1.AlertType
 	2,  // 8: notbbg.v1.Alert.status:type_name -> notbbg.v1.AlertStatus
-	17, // 9: notbbg.v1.Alert.created_at:type_name -> google.protobuf.Timestamp
-	17, // 10: notbbg.v1.Alert.triggered_at:type_name -> google.protobuf.Timestamp
-	17, // 11: notbbg.v1.FeedStatus.last_update:type_name -> google.protobuf.Timestamp
+	24, // 9: notbbg.v1.Alert.created_at:type_name -> google.protobuf.Timestamp
+	24, // 10: notbbg.v1.Alert.triggered_at:type_name -> google.protobuf.Timestamp
+	24, // 11: notbbg.v1.FeedStatus.last_update:type_name -> google.protobuf.Timestamp
 	3,  // 12: notbbg.v1.FeedStatus.state:type_name -> notbbg.v1.FeedState
-	15, // 13: notbbg.v1.Subscription.filters:type_name -> notbbg.v1.Subscription.FiltersEntry
-	16, // 14: notbbg.v1.SeriesKey.dims:type_name -> notbbg.v1.SeriesKey.DimsEntry
+	21, // 13: notbbg.v1.Subscription.filters:type_name -> notbbg.v1.Subscription.FiltersEntry
+	22, // 14: notbbg.v1.SeriesKey.dims:type_name -> notbbg.v1.SeriesKey.DimsEntry
 	12, // 15: notbbg.v1.SeriesPoint.key:type_name -> notbbg.v1.SeriesKey
-	17, // 16: notbbg.v1.SeriesPoint.t:type_name -> google.protobuf.Timestamp
+	24, // 16: notbbg.v1.SeriesPoint.t:type_name -> google.protobuf.Timestamp
 	4,  // 17: notbbg.v1.SeriesPoint.ohlc:type_name -> notbbg.v1.OHLC
 	6,  // 18: notbbg.v1.SeriesPoint.lob:type_name -> notbbg.v1.LOBSnapshot
 	7,  // 19: notbbg.v1.SeriesPoint.trade:type_name -> notbbg.v1.Trade
-	17, // 20: notbbg.v1.Update.timestamp:type_name -> google.protobuf.Timestamp
+	24, // 20: notbbg.v1.Update.timestamp:type_name -> google.protobuf.Timestamp
 	4,  // 21: notbbg.v1.Update.ohlc:type_name -> notbbg.v1.OHLC
 	6,  // 22: notbbg.v1.Update.lob:type_name -> notbbg.v1.LOBSnapshot
 	7,  // 23: notbbg.v1.Update.trade:type_name -> notbbg.v1.Trade
 	8,  // 24: notbbg.v1.Update.news:type_name -> notbbg.v1.NewsItem
 	9,  // 25: notbbg.v1.Update.alert:type_name -> notbbg.v1.Alert
 	10, // 26: notbbg.v1.Update.feed_status:type_name -> notbbg.v1.FeedStatus
-	27, // [27:27] is the sub-list for method output_type
-	27, // [27:27] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	24, // 27: notbbg.v1.TradeAgg.window_start:type_name -> google.protobuf.Timestamp
+	24, // 28: notbbg.v1.TradeAgg.window_end:type_name -> google.protobuf.Timestamp
+	24, // 29: notbbg.v1.TradeSnap.generated_at:type_name -> google.protobuf.Timestamp
+	7,  // 30: notbbg.v1.TradeSnap.trades:type_name -> notbbg.v1.Trade
+	24, // 31: notbbg.v1.SanityRow.updated_at:type_name -> google.protobuf.Timestamp
+	23, // 32: notbbg.v1.SanityRow.prices:type_name -> notbbg.v1.SanityRow.PricesEntry
+	24, // 33: notbbg.v1.SanitySnapshot.generated_at:type_name -> google.protobuf.Timestamp
+	17, // 34: notbbg.v1.SanitySnapshot.rows:type_name -> notbbg.v1.SanityRow
+	24, // 35: notbbg.v1.PluginStatus.last_activity:type_name -> google.protobuf.Timestamp
+	24, // 36: notbbg.v1.GenericRow.observed_at:type_name -> google.protobuf.Timestamp
+	25, // 37: notbbg.v1.GenericRow.payload:type_name -> google.protobuf.Struct
+	38, // [38:38] is the sub-list for method output_type
+	38, // [38:38] is the sub-list for method input_type
+	38, // [38:38] is the sub-list for extension type_name
+	38, // [38:38] is the sub-list for extension extendee
+	0,  // [0:38] is the sub-list for field type_name
 }
 
 func init() { file_notbbg_v1_types_proto_init() }
@@ -1527,7 +2193,7 @@ func file_notbbg_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notbbg_v1_types_proto_rawDesc), len(file_notbbg_v1_types_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   13,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

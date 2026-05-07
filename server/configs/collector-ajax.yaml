@@ -1,0 +1,20 @@
+# Collector config for AJAX (remote backup server)
+# Usage: NOTBBG_TOKEN=<token> ./bin/notbbg-collector -config server/configs/collector-ajax.yaml
+#
+# Deploy to ajax:
+#   scp bin/notbbg-collector ajax:~/notbbg/
+#   scp server/configs/collector-ajax.yaml ajax:~/notbbg/configs/
+
+server:
+  tcp_addr: ":9473"
+
+cache:
+  db_path: /home/notbbg/data/collector.db
+  eviction_interval: 1h
+  default_ttl: 168h    # 7 days (remote keeps more history)
+  max_size_mb: 2048    # 2GB
+
+datalake:
+  enabled: true
+  path: /home/notbbg/datalake
+  rotation: hourly     # hourly rotation for finer granularity

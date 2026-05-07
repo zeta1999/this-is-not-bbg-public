@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,12 +22,13 @@ import (
 
 // BinanceAdapter connects to Binance spot market data.
 type BinanceAdapter struct {
-	bus       *bus.Bus
-	symbols   []string
-	feedTypes []string
-	wsURL     string
-	restBase  string
-	rateLimit int
+	bus        *bus.Bus
+	symbols    []string
+	feedTypes  []string
+	timeframes []string
+	wsURL      string
+	restBase   string
+	rateLimit  int
 
 	mu          sync.RWMutex
 	state       string
@@ -36,22 +38,31 @@ type BinanceAdapter struct {
 	bytesRecv   uint64
 }
 
-// NewBinanceAdapter creates a Binance exchange adapter.
-func NewBinanceAdapter(b *bus.Bus, symbols, feedTypes []string, wsURL, restBase string, rateLimit int) *BinanceAdapter {
+// NewBinanceAdapter creates a Binance exchange adapter. Multiple
+// timeframes subscribe to the corresponding native kline streams
+// from Binance — feeds ingest at native rate per the
+// backend-resample policy (no client-side or capture-time
+// resampling). Empty timeframes defaults to ["1m"] to preserve the
+// pre-multi-TF behaviour for older callers.
+func NewBinanceAdapter(b *bus.Bus, symbols, feedTypes, timeframes []string, wsURL, restBase string, rateLimit int) *BinanceAdapter {
 	if wsURL == "" {
 		wsURL = "wss://stream.binance.com:9443/ws"
 	}
 	if restBase == "" {
 		restBase = "https://api.binance.com"
 	}
+	if len(timeframes) == 0 {
+		timeframes = []string{"1m"}
+	}
 	return &BinanceAdapter{
-		bus:       b,
-		symbols:   symbols,
-		feedTypes: feedTypes,
-		wsURL:     wsURL,
-		restBase:  restBase,
-		rateLimit: rateLimit,
-		state:     "disconnected",
+		bus:        b,
+		symbols:    symbols,
+		feedTypes:  feedTypes,
+		timeframes: timeframes,
+		wsURL:      wsURL,
+		restBase:   restBase,
+		rateLimit:  rateLimit,
+		state:      "disconnected",
 	}
 }
 
@@ -122,7 +133,9 @@ func (a *BinanceAdapter) connectAndStream(ctx context.Context) error {
 			case "trades":
 				streams = append(streams, s+"@trade")
 			case "ohlc":
-				streams = append(streams, s+"@kline_1m")
+				for _, tf := range a.timeframes {
+					streams = append(streams, s+"@kline_"+tf)
+				}
 			case "orderbook":
 				streams = append(streams, s+"@depth20@100ms")
 			}
@@ -264,13 +277,15 @@ func (a *BinanceAdapter) handleTrade(data json.RawMessage) {
 	}
 
 	trade := feeds.Trade{
-		Instrument: msg.Symbol,
-		Exchange:   "binance",
-		Timestamp:  time.UnixMilli(msg.Time),
-		Price:      price,
-		Quantity:   qty,
-		Side:       side,
-		TradeID:    strconv.FormatInt(msg.TradeID, 10),
+		Instrument:      msg.Symbol,
+		Exchange:        "binance",
+		Timestamp:       time.UnixMilli(msg.Time),
+		Price:           price,
+		Quantity:        qty,
+		Side:            side,
+		TradeID:         strconv.FormatInt(msg.TradeID, 10),
+		PriceDecimal:    msg.Price,
+		QuantityDecimal: msg.Quantity,
 	}
 
 	a.bus.Publish(bus.Message{
@@ -297,16 +312,35 @@ func (a *BinanceAdapter) handleKline(data json.RawMessage) {
 	close_, _ := msg.Kline.Close.Float64()
 	vol, _ := msg.Kline.Volume.Float64()
 
+	// Anchor the bar's Timestamp at the bar OPEN by truncating to
+	// the timeframe interval. The WAL was previously storing
+	// "14:27:59.999+09:00" — that's the kline CLOSE time, which
+	// happens because binance's WS payload has both `t` (open) and
+	// `T` (close) and somewhere a stamp landed on the close field.
+	// Truncate makes the source-of-truth unambiguous: every update
+	// for the 14:27 1m bar produces the SAME 14:27:00 timestamp, so
+	// upsertCandle's equal-Timestamp dedup actually works and
+	// DataRange [now-10m, now] returns ~10 distinct minute bars
+	// instead of thousands of close-stamped duplicates.
+	ts := time.UnixMilli(msg.Kline.StartTime)
+	if interval := tfInterval(msg.Kline.Interval); interval > 0 {
+		ts = ts.Truncate(interval)
+	}
 	ohlc := feeds.OHLC{
-		Instrument: msg.Symbol,
-		Exchange:   "binance",
-		Timeframe:  msg.Kline.Interval,
-		Timestamp:  time.UnixMilli(msg.Kline.StartTime),
-		Open:       open,
-		High:       high,
-		Low:        low,
-		Close:      close_,
-		Volume:     vol,
+		Instrument:    msg.Symbol,
+		Exchange:      "binance",
+		Timeframe:     msg.Kline.Interval,
+		Timestamp:     ts,
+		Open:          open,
+		High:          high,
+		Low:           low,
+		Close:         close_,
+		Volume:        vol,
+		OpenDecimal:   msg.Kline.Open.String(),
+		HighDecimal:   msg.Kline.High.String(),
+		LowDecimal:    msg.Kline.Low.String(),
+		CloseDecimal:  msg.Kline.Close.String(),
+		VolumeDecimal: msg.Kline.Volume.String(),
 	}
 
 	a.bus.Publish(bus.Message{
@@ -338,7 +372,7 @@ func (a *BinanceAdapter) handleDepth(stream string, data json.RawMessage) {
 		}
 		price, _ := strconv.ParseFloat(b[0], 64)
 		qty, _ := strconv.ParseFloat(b[1], 64)
-		bids = append(bids, feeds.LOBLevel{Price: price, Quantity: qty})
+		bids = append(bids, feeds.LOBLevel{Price: price, Quantity: qty, PriceDecimal: b[0], QuantityDecimal: b[1]})
 	}
 
 	asks := make([]feeds.LOBLevel, 0, len(msg.Asks))
@@ -348,7 +382,7 @@ func (a *BinanceAdapter) handleDepth(stream string, data json.RawMessage) {
 		}
 		price, _ := strconv.ParseFloat(a_[0], 64)
 		qty, _ := strconv.ParseFloat(a_[1], 64)
-		asks = append(asks, feeds.LOBLevel{Price: price, Quantity: qty})
+		asks = append(asks, feeds.LOBLevel{Price: price, Quantity: qty, PriceDecimal: a_[0], QuantityDecimal: a_[1]})
 	}
 
 	snap := feeds.LOBSnapshot{
@@ -385,18 +419,26 @@ func (a *BinanceAdapter) BackfillHistorical(ctx context.Context, req feeds.Backf
 		cap = 100_000
 	}
 
+	// Page NEWEST → oldest. Each call uses `endTime=<cursor>` and
+	// gets up to pageSize bars whose StartTime ≤ cursor. We then
+	// advance cursor to the FIRST page bar's StartTime - 1 ms and
+	// loop. Recent-first means the most useful bars (last hour, last
+	// day) hit downstream consumers (cache, datalake, DataRange-as-
+	// it-streams) within the first REST call instead of after the
+	// whole 365-day grind. Caller still sees a single time-sorted
+	// slice on return — we sort at the end.
 	var out []feeds.OHLC
-	cursor := req.From
-	for cursor.Before(req.To) && len(out) < cap {
+	cursor := req.To
+	for cursor.After(req.From) && len(out) < cap {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
 
 		url := fmt.Sprintf("%s/api/v3/klines?symbol=%s&interval=%s&startTime=%d&endTime=%d&limit=%d",
 			a.restBase, req.Instrument, req.Timeframe,
-			cursor.UnixMilli(), req.To.UnixMilli(), pageSize)
+			req.From.UnixMilli(), cursor.UnixMilli(), pageSize)
 
-		page, lastTS, err := a.fetchKlineWindow(ctx, url, req.Instrument, req.Timeframe)
+		page, _, err := a.fetchKlineWindow(ctx, url, req.Instrument, req.Timeframe)
 		if err != nil {
 			return out, err
 		}
@@ -404,9 +446,11 @@ func (a *BinanceAdapter) BackfillHistorical(ctx context.Context, req feeds.Backf
 			break
 		}
 		out = append(out, page...)
-		// Advance past the last candle's start time (plus 1 ms) to
-		// avoid re-fetching the boundary row on the next page.
-		cursor = time.UnixMilli(lastTS + 1)
+		// Advance backwards: the FIRST bar in the page (oldest in this
+		// window) — minus 1 ms — becomes the new endTime, so the next
+		// call picks up bars older than that without overlap.
+		firstTS := page[0].Timestamp.UnixMilli()
+		cursor = time.UnixMilli(firstTS - 1)
 		if len(page) < pageSize {
 			break
 		}
@@ -414,6 +458,12 @@ func (a *BinanceAdapter) BackfillHistorical(ctx context.Context, req feeds.Backf
 	if len(out) > cap {
 		out = out[:cap]
 	}
+	// Sort ASC by Timestamp so callers (cache key derivation,
+	// datalake partitioning, alignToNow, upsertCandle's fast path)
+	// see a normal oldest-first slice regardless of fetch direction.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Timestamp.Before(out[j].Timestamp)
+	})
 	return out, nil
 }
 
@@ -462,11 +512,15 @@ func (a *BinanceAdapter) fetchKlineWindow(ctx context.Context, url, symbol, time
 		close_, _ := strconv.ParseFloat(closeS, 64)
 		vol, _ := strconv.ParseFloat(volS, 64)
 
+		barTs := time.UnixMilli(ts)
+		if interval := tfInterval(timeframe); interval > 0 {
+			barTs = barTs.Truncate(interval)
+		}
 		candles = append(candles, feeds.OHLC{
 			Instrument: symbol,
 			Exchange:   "binance",
 			Timeframe:  timeframe,
-			Timestamp:  time.UnixMilli(ts),
+			Timestamp:  barTs,
 			Open:       open, High: high, Low: low, Close: close_, Volume: vol,
 		})
 		if ts > lastTS {
@@ -521,11 +575,15 @@ func (a *BinanceAdapter) FetchOHLCHistory(ctx context.Context, symbol, interval 
 		close_, _ := strconv.ParseFloat(closeS, 64)
 		vol, _ := strconv.ParseFloat(volS, 64)
 
+		barTs := time.UnixMilli(ts)
+		if step := tfInterval(interval); step > 0 {
+			barTs = barTs.Truncate(step)
+		}
 		candles = append(candles, feeds.OHLC{
 			Instrument: symbol,
 			Exchange:   "binance",
 			Timeframe:  interval,
-			Timestamp:  time.UnixMilli(ts),
+			Timestamp:  barTs,
 			Open:       open,
 			High:       high,
 			Low:        low,
@@ -537,9 +595,25 @@ func (a *BinanceAdapter) FetchOHLCHistory(ctx context.Context, symbol, interval 
 	return candles, nil
 }
 
-// BackfillHistory fetches and caches historical OHLC data for all symbols.
+// BackfillHistory fetches and caches historical OHLC data for all
+// symbols across `days` days. Uses BackfillHistorical's paginated
+// path so a 365-day daily window or 90-day hourly window aren't
+// silently truncated at Binance's 1000-row-per-call ceiling — the
+// cap before this commit hid useful 1d/1w history that BTCUSDT
+// definitely has on Binance's end.
 func (a *BinanceAdapter) BackfillHistory(ctx context.Context, days int, timeframes []string) error {
 	var errCount atomic.Int64
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -days)
+
+	// Recent-first pass: fetch the last 2 hours for every (symbol,
+	// tf) BEFORE grinding through the deep 365-day window. This is
+	// the chunk the trader actually sees on the chart's visible
+	// window — populating it inside the first second of boot beats
+	// staring at "3 candles" while the slow REST loop catches up.
+	// Each call is a single REST page (≤120 rows for 1m × 2h).
+	// Errors here are non-fatal; the deep pass below will retry.
+	a.backfillRecentPass(ctx, now.Add(-2*time.Hour), now, timeframes)
 
 	for _, symbol := range a.symbols {
 		for _, tf := range timeframes {
@@ -549,21 +623,28 @@ func (a *BinanceAdapter) BackfillHistory(ctx context.Context, days int, timefram
 			default:
 			}
 
-			limit := daysToLimit(days, tf)
-			if limit > 1000 {
-				limit = 1000 // Binance max
-			}
-
-			candles, err := a.FetchOHLCHistory(ctx, symbol, tf, limit)
+			candles, err := a.BackfillHistorical(ctx, feeds.BackfillRequest{
+				Instrument: symbol,
+				Timeframe:  tf,
+				From:       from,
+				To:         now,
+				Limit:      daysToLimit(days, tf),
+			})
 			if err != nil {
 				slog.Warn("backfill error", "symbol", symbol, "tf", tf, "error", err)
 				errCount.Add(1)
 				continue
 			}
 
+			// Historical bars go on a dedicated topic prefix so live
+			// consumers (sanity, alerts, consistency, TUI/desktop SSE)
+			// don't see year-old klines as fresh ticks. The cache +
+			// datalake writers subscribe to both prefixes; the
+			// datalake normalizes the topic on the way to disk so
+			// DataRange queries against `ohlc.*.*` still find these.
 			for _, c := range candles {
 				a.bus.Publish(bus.Message{
-					Topic:   fmt.Sprintf("ohlc.binance.%s", symbol),
+					Topic:   fmt.Sprintf("ohlc-historical.binance.%s", symbol),
 					Payload: c,
 				})
 			}
@@ -590,13 +671,112 @@ func daysToLimit(days int, timeframe string) int {
 		return days * minutesPerDay / 5
 	case "15m":
 		return days * minutesPerDay / 15
+	case "30m":
+		return days * minutesPerDay / 30
 	case "1h":
 		return days * 24
 	case "4h":
 		return days * 6
 	case "1d":
 		return days
+	case "1w":
+		// 7 days per candle, so days/7 — round up so a 7-day request
+		// still returns at least one candle.
+		w := days / 7
+		if w < 1 {
+			w = 1
+		}
+		return w
 	default:
 		return days * minutesPerDay
 	}
+}
+
+// tfInterval converts a binance kline interval string ("1m", "5m",
+// "1h", "1d", "1w") to a time.Duration suitable for Truncate. The
+// adapter uses this to align bar timestamps to the interval open
+// boundary regardless of which field on the kline payload the
+// timestamp was sourced from. Unknown / unsupported intervals
+// return 0 so the caller leaves the timestamp untruncated.
+func tfInterval(s string) time.Duration {
+	switch s {
+	case "1m":
+		return 1 * time.Minute
+	case "3m":
+		return 3 * time.Minute
+	case "5m":
+		return 5 * time.Minute
+	case "15m":
+		return 15 * time.Minute
+	case "30m":
+		return 30 * time.Minute
+	case "1h":
+		return 1 * time.Hour
+	case "2h":
+		return 2 * time.Hour
+	case "4h":
+		return 4 * time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "8h":
+		return 8 * time.Hour
+	case "12h":
+		return 12 * time.Hour
+	case "1d":
+		return 24 * time.Hour
+	case "3d":
+		return 3 * 24 * time.Hour
+	case "1w":
+		return 7 * 24 * time.Hour
+	}
+	return 0
+}
+
+// backfillRecentPass fetches the [from, to] window for every
+// (symbol, tf) pair and publishes the results on the historical
+// topic, IN PARALLEL across symbols (rate-limit gated by binance's
+// per-second budget — the deep pass below uses sleep, but the
+// recent pass is small enough to fire concurrently). Designed to
+// finish within seconds even for a dozen symbols × 7 timeframes
+// so the chart populates the visible window immediately instead
+// of waiting for the 365-day grind.
+//
+// Errors per (symbol, tf) are logged and swallowed — the deep
+// pass that follows handles retries naturally.
+func (a *BinanceAdapter) backfillRecentPass(ctx context.Context, from, to time.Time, timeframes []string) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8) // cap concurrency so we don't blow the REST budget
+
+	for _, symbol := range a.symbols {
+		for _, tf := range timeframes {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(symbol, tf string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				candles, err := a.BackfillHistorical(ctx, feeds.BackfillRequest{
+					Instrument: symbol,
+					Timeframe:  tf,
+					From:       from,
+					To:         to,
+				})
+				if err != nil || len(candles) == 0 {
+					return
+				}
+				for _, c := range candles {
+					a.bus.Publish(bus.Message{
+						Topic:   fmt.Sprintf("ohlc-historical.binance.%s", symbol),
+						Payload: c,
+					})
+				}
+				slog.Info("backfill recent-pass", "symbol", symbol, "tf", tf, "candles", len(candles))
+			}(symbol, tf)
+		}
+	}
+	wg.Wait()
 }

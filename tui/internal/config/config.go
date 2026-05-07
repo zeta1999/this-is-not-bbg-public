@@ -10,10 +10,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DefaultPath returns the default config file path.
+// DefaultPath returns the default config file path, honoring the
+// --home override and XDG_CONFIG_HOME via ResolveHome.
 func DefaultPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "notbbg", "config.yaml")
+	return filepath.Join(ResolveHome(), "config.yaml")
 }
 
 // UserConfig holds user preferences shared between TUI and CLI.

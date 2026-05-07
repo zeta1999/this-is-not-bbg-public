@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { colors, fonts, tableCellStyle, tableHeaderStyle } from "../styles/theme";
 import { TradeAgg, TradeSnapData } from "../store";
 
@@ -19,8 +19,69 @@ function fmtLarge(v: number): string {
   return v.toFixed(2);
 }
 
+// Server keys are "<exchange>/<instrument>"; surface both in the
+// sidebar so 3x BTCUSDT (binance / bybit / bitget) is no longer
+// indistinguishable.
+function splitKey(k: string): { exchange: string; instrument: string } {
+  const i = k.indexOf("/");
+  if (i < 0) return { exchange: "", instrument: k };
+  return { exchange: k.slice(0, i), instrument: k.slice(i + 1) };
+}
+
 export const TradesPanel: React.FC<Props> = ({ aggs, snaps, keys }) => {
   const [activeIdx, setActiveIdx] = useState(0);
+  const [search, setSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const activeRowRef = useRef<HTMLDivElement>(null);
+
+  // Clamp activeIdx if keys shrink — avoid landing on a deleted instrument.
+  useEffect(() => {
+    if (activeIdx >= keys.length) setActiveIdx(0);
+  }, [keys.length, activeIdx]);
+
+  // Keyboard nav — match OHLC: '[' / ']' / ArrowLeft / ArrowRight
+  // step the active instrument; '/' focuses the sidebar search.
+  // Skip when typing in an input so the search field stays usable.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (keys.length === 0) return;
+      if (e.key === "[" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        setActiveIdx((i) => (i - 1 + keys.length) % keys.length);
+      } else if (e.key === "]" || e.key === "ArrowRight") {
+        e.preventDefault();
+        setActiveIdx((i) => (i + 1) % keys.length);
+      } else if (e.key === "/") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [keys.length]);
+
+  // Scroll the selected sidebar row into view when activeIdx
+  // changes via keyboard so the user always sees the cursor.
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx]);
+
+  const sidebarItems = useMemo(() => {
+    const q = search.toLowerCase();
+    return keys
+      .map((key, idx) => ({ key, idx, ...splitKey(key) }))
+      .filter(({ key, exchange, instrument }) =>
+        !q
+        || instrument.toLowerCase().includes(q)
+        || exchange.toLowerCase().includes(q)
+        || key.toLowerCase().includes(q))
+      .sort((a, b) =>
+        a.instrument.localeCompare(b.instrument) ||
+        a.exchange.localeCompare(b.exchange)
+      );
+  }, [keys, search]);
 
   if (keys.length === 0) {
     return (
@@ -32,6 +93,7 @@ export const TradesPanel: React.FC<Props> = ({ aggs, snaps, keys }) => {
   }
 
   const activeKey = keys[activeIdx] || keys[0];
+  const { exchange: actEx, instrument: actInst } = splitKey(activeKey);
   const agg = aggs[activeKey];
   const snap = snaps[activeKey];
 
@@ -41,24 +103,57 @@ export const TradesPanel: React.FC<Props> = ({ aggs, snaps, keys }) => {
     <div style={s.container}>
       <div style={s.header}>
         <span style={s.title}>TRADES</span>
-        {/* Instrument tabs */}
-        {keys.map((k, i) => (
-          <span
-            key={k}
-            onClick={() => setActiveIdx(i)}
-            style={{
-              ...s.tab,
-              color: i === activeIdx ? colors.amber : colors.dimText,
-              borderBottom: i === activeIdx ? `2px solid ${colors.amber}` : "2px solid transparent",
-              cursor: "pointer",
-            }}
-          >
-            {k.split("/")[1] || k}
-          </span>
-        ))}
+        <span style={s.activeName}>{actInst}</span>
+        <span style={s.activeExch}>{actEx}</span>
+        <span style={s.hint}>[/]:pair  /:search</span>
       </div>
 
-      <div style={s.body}>
+      <div style={s.split}>
+        {/* Sidebar — searchable instrument list, scroll-into-view on active. */}
+        <div style={s.sidebar}>
+          <div style={s.sideTitle}>INSTRUMENTS</div>
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder="/ search pair/exchange"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setSearch("");
+                searchInputRef.current?.blur();
+              } else if (e.key === "Enter") {
+                const first = sidebarItems[0];
+                if (first) setActiveIdx(first.idx);
+                searchInputRef.current?.blur();
+              }
+            }}
+            style={s.sideSearch}
+          />
+          <div style={s.sideList}>
+            {sidebarItems.map(({ key, idx, exchange, instrument }) => {
+              const isActive = idx === activeIdx;
+              const a = aggs[key];
+              const last = a ? a.Close : 0;
+              return (
+                <div
+                  key={key}
+                  ref={isActive ? activeRowRef : undefined}
+                  onClick={() => setActiveIdx(idx)}
+                  style={{ ...s.sideItem, ...(isActive ? s.sideItemActive : {}) }}
+                >
+                  <div>
+                    <span style={s.sideName}>{instrument}</span>
+                    <span style={s.sideExch}>{exchange}</span>
+                  </div>
+                  <span style={s.sidePrice}>{last > 0 ? fmt(last) : ""}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={s.body}>
         {/* Aggregate stats */}
         {agg && (
           <div style={s.statsGrid}>
@@ -136,6 +231,7 @@ export const TradesPanel: React.FC<Props> = ({ aggs, snaps, keys }) => {
             </table>
           </div>
         )}
+        </div>
       </div>
     </div>
   );
@@ -144,12 +240,24 @@ export const TradesPanel: React.FC<Props> = ({ aggs, snaps, keys }) => {
 const s: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", height: "100%" },
   header: {
-    display: "flex", alignItems: "center", gap: 16,
+    display: "flex", alignItems: "center", gap: 12,
     padding: "6px 12px", background: "#0D0D0D",
     borderBottom: `1px solid ${colors.border}`, flexShrink: 0,
   },
   title: { fontSize: 13, fontWeight: 900, color: colors.amber, fontFamily: fonts.mono },
-  tab: { fontSize: 11, fontWeight: 700, fontFamily: fonts.mono, padding: "2px 8px" },
+  activeName: { fontSize: 14, fontWeight: 900, color: colors.amber, fontFamily: fonts.mono },
+  activeExch: { fontSize: 10, color: colors.dimText, fontFamily: fonts.mono },
+  hint: { fontSize: 10, color: colors.dimText, fontFamily: fonts.mono, marginLeft: "auto" },
+  split: { display: "flex", flex: 1, overflow: "hidden" },
+  sidebar: { width: 220, borderRight: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", flexShrink: 0 },
+  sideTitle: { fontSize: 10, color: colors.amber, fontWeight: 700, padding: "6px 10px", letterSpacing: "0.1em", fontFamily: fonts.mono },
+  sideSearch: { margin: "0 8px 4px", fontSize: 10, padding: "3px 6px", background: "#0a0a0a", border: `1px solid ${colors.border}`, color: colors.white, borderRadius: 2, outline: "none", fontFamily: fonts.mono },
+  sideList: { flex: 1, overflow: "auto" },
+  sideItem: { display: "flex", justifyContent: "space-between", padding: "3px 10px", cursor: "pointer", fontSize: 11, color: colors.dimText, fontFamily: fonts.mono },
+  sideItemActive: { color: colors.amber, fontWeight: 700, background: "#1A1200" },
+  sideName: {},
+  sideExch: { fontSize: 8, color: colors.dimText, marginLeft: 4 },
+  sidePrice: { fontSize: 10 },
   body: { flex: 1, overflow: "auto", padding: 12 },
   statsGrid: {
     display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",

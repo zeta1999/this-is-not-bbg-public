@@ -1,0 +1,11 @@
+name: formulettes-runner
+command: ./formulettes-runner
+args: []
+input_topics:
+  - "plugin.formulettes-runner.input"
+output_topics:
+  - "plugin.formulettes-runner.screen"
+screens:
+  - id: "FORM"
+    label: "Formulettes"
+    icon: "calculator-outline"

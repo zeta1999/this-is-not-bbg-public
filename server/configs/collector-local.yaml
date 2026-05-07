@@ -1,0 +1,16 @@
+# Collector config for LOCAL testing (same machine as server)
+# Usage: NOTBBG_TOKEN=<token> ./bin/notbbg-collector -config server/configs/collector-local.yaml
+
+server:
+  tcp_addr: ":9473"
+
+cache:
+  db_path: /tmp/notbbg-collector.db
+  eviction_interval: 1h
+  default_ttl: 24h
+  max_size_mb: 256
+
+datalake:
+  enabled: true
+  path: /tmp/notbbg-datalake
+  rotation: daily

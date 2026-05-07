@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/file-feed-config",
+  "$ref": "#/$defs/FileFeedConfig",
+  "$defs": {
+    "FileFeedConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "topic_prefix": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "path",
+        "poll_interval"
+      ]
+    }
+  }
+}

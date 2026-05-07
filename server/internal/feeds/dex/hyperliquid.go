@@ -86,13 +86,27 @@ func (a *HyperliquidAdapter) connectAndStream(ctx context.Context) error {
 	}
 	defer conn.Close()
 
-	// Subscribe to trades and L2 book for each symbol.
+	// Subscribe to trades, L2 book, and per-asset context for each
+	// symbol. `activeAssetCtx` delivers mark / oracle / funding /
+	// open interest, which feeds the PerpetualSnapshot payload.
 	for _, sym := range a.symbols {
 		sub, _ := json.Marshal(map[string]any{
 			"method": "subscribe",
 			"subscription": map[string]any{"type": "trades", "coin": sym},
 		})
 		_ = conn.WriteMessage(websocket.TextMessage, sub)
+
+		sub3, _ := json.Marshal(map[string]any{
+			"method":       "subscribe",
+			"subscription": map[string]any{"type": "activeAssetCtx", "coin": sym},
+		})
+		_ = conn.WriteMessage(websocket.TextMessage, sub3)
+
+		sub4, _ := json.Marshal(map[string]any{
+			"method":       "subscribe",
+			"subscription": map[string]any{"type": "liquidations", "coin": sym},
+		})
+		_ = conn.WriteMessage(websocket.TextMessage, sub4)
 
 		sub2, _ := json.Marshal(map[string]any{
 			"method": "subscribe",
@@ -141,7 +155,85 @@ func (a *HyperliquidAdapter) processMessage(raw []byte) {
 		a.handleTrades(msg.Data)
 	case "l2Book":
 		a.handleBook(msg.Data)
+	case "activeAssetCtx":
+		a.handleAssetCtx(msg.Data)
+	case "liquidations":
+		a.handleLiquidations(msg.Data)
 	}
+}
+
+// handleLiquidations maps Hyperliquid liquidation frames to the
+// canonical LiquidationEvent stream. HL ships an array per frame;
+// one bus message per row so downstream subscribers can filter by
+// topic without re-splitting.
+func (a *HyperliquidAdapter) handleLiquidations(data json.RawMessage) {
+	var liqs []struct {
+		Coin string      `json:"coin"`
+		Px   json.Number `json:"px"`
+		Sz   json.Number `json:"sz"`
+		Side string      `json:"side"` // "B" or "A" — taker side
+		Time int64       `json:"time"`
+	}
+	if json.Unmarshal(data, &liqs) != nil {
+		return
+	}
+	for _, l := range liqs {
+		price, _ := l.Px.Float64()
+		qty, _ := l.Sz.Float64()
+		symbol := l.Coin + "USD"
+		side := "buy"
+		if strings.EqualFold(l.Side, "A") || strings.EqualFold(l.Side, "sell") {
+			side = "sell"
+		}
+		a.bus.Publish(bus.Message{
+			Topic: fmt.Sprintf("liquidation.hyperliquid.%s", symbol),
+			Payload: feeds.LiquidationEvent{
+				Instrument: symbol,
+				Exchange:   "hyperliquid",
+				Timestamp:  time.UnixMilli(l.Time),
+				Side:       side,
+				Price:      price,
+				Quantity:   qty,
+				Notional:   price * qty,
+			},
+		})
+	}
+}
+
+// handleAssetCtx maps Hyperliquid's activeAssetCtx payload to a
+// feeds.PerpetualSnapshot on `perp.hyperliquid.<symbol>`. The
+// `ctx` object carries mark price, oracle (index) price, funding,
+// and open interest; we populate only what the venue exposes.
+func (a *HyperliquidAdapter) handleAssetCtx(data json.RawMessage) {
+	var msg struct {
+		Coin string `json:"coin"`
+		Ctx  struct {
+			MarkPx       json.Number `json:"markPx"`
+			OraclePx     json.Number `json:"oraclePx"`
+			Funding      json.Number `json:"funding"`
+			OpenInterest json.Number `json:"openInterest"`
+		} `json:"ctx"`
+	}
+	if json.Unmarshal(data, &msg) != nil || msg.Coin == "" {
+		return
+	}
+	mark, _ := msg.Ctx.MarkPx.Float64()
+	oracle, _ := msg.Ctx.OraclePx.Float64()
+	fr, _ := msg.Ctx.Funding.Float64()
+	oi, _ := msg.Ctx.OpenInterest.Float64()
+	symbol := msg.Coin + "USD"
+	a.bus.Publish(bus.Message{
+		Topic: fmt.Sprintf("perp.hyperliquid.%s", symbol),
+		Payload: feeds.PerpetualSnapshot{
+			Instrument:       symbol,
+			Exchange:         "hyperliquid",
+			Timestamp:        time.Now(),
+			MarkPrice:        mark,
+			IndexPrice:       oracle,
+			FundingRate:      fr,
+			OpenInterestBase: oi,
+		},
+	})
 }
 
 func (a *HyperliquidAdapter) handleTrades(data json.RawMessage) {

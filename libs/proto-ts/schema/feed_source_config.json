@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/notbbg/notbbg/server/internal/config/feed-source-config",
+  "$ref": "#/$defs/FeedSourceConfig",
+  "$defs": {
+    "FeedSourceConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "poll_interval": {
+          "type": "integer"
+        },
+        "cache_ttl": {
+          "type": "integer"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "poll_interval",
+        "cache_ttl"
+      ]
+    }
+  }
+}
